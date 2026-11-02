@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Built dashboard (generated on every run, published to Pages, never committed)
+site/
+
+# Local copies of the source data, if you test with: python update.py --input <file>
+era5_daily_series_2t_global*.csv
