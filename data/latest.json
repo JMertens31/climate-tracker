@@ -1,7 +1,7 @@
 {
   "latest_date": "2026-10-31",
   "latest_status": "PRELIMINARY",
-  "generated_utc": "2026-11-02 18:06 UTC",
+  "generated_utc": "2026-11-02 19:50 UTC",
   "baseline": "1850-1900 (C3S daily offset applied to ERA5 1991-2020 anomalies)",
   "units": "degC",
   "latest_daily": 1.966,
