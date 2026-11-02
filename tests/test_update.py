@@ -115,6 +115,60 @@ class ComputeTest(unittest.TestCase):
         self.assertIsNotNone(res)
 
 
+class AnnualTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.site = Path(self.tmp.name) / "site"
+        self.latest = Path(self.tmp.name) / "data" / "latest.json"
+        self.ano = lambda d: round(0.03 * (d.year - 2000) + 0.2 * math.sin(d.toordinal() / 41.0), 3)
+        # Starts mid-year, so 2014 is partial and must be excluded; 2026 is in progress.
+        self.text = synthetic_csv(dt.date(2014, 7, 1), dt.date(2026, 10, 31), self.ano)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def brute_year(self, y):
+        d, vals = dt.date(y, 1, 1), []
+        while d.year == y:
+            vals.append(round(self.ano(d), 3) + c3s_offset(d))
+            d += dt.timedelta(days=1)
+        return sum(vals) / len(vals), len(vals)
+
+    def test_complete_years_only(self):
+        res = update.build(self.text, today=dt.date(2026, 11, 2), site_dir=self.site, repo_latest=self.latest)
+        years = [a["year"] for a in res["annual_rows"]]
+        self.assertEqual(years, list(range(2015, 2026)))
+
+    def test_annual_values_and_leap_days(self):
+        res = update.build(self.text, today=dt.date(2026, 11, 2), site_dir=self.site, repo_latest=self.latest)
+        for a in res["annual_rows"]:
+            exp, n = self.brute_year(a["year"])
+            self.assertEqual(a["days"], n)
+            self.assertAlmostEqual(a["pi"], exp, places=6, msg=a["year"])
+        self.assertEqual(next(a for a in res["annual_rows"] if a["year"] == 2024)["days"], 366)
+
+    def test_ranks_and_outputs(self):
+        res = update.build(self.text, today=dt.date(2026, 11, 2), site_dir=self.site, repo_latest=self.latest)
+        ranked = sorted(res["annual_rows"], key=lambda a: a["rank"])
+        self.assertEqual([a["rank"] for a in ranked], list(range(1, len(ranked) + 1)))
+        self.assertTrue(all(x["pi"] >= y["pi"] for x, y in zip(ranked, ranked[1:])))
+        with (self.site / "data" / "annual.csv").open() as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual(rows[0]["year"], "2015")
+        self.assertEqual(rows[-1]["year"], "2025")
+        latest = json.loads(self.latest.read_text())
+        self.assertEqual(latest["last_complete_year"]["year"], 2025)
+        self.assertEqual(latest["warmest_year"]["year"], ranked[0]["year"])
+        html = (self.site / "index.html").read_text()
+        self.assertIn("Annual Averages, 2015&ndash;2025", html)
+        self.assertIn("Warmest 5 Years", html)
+        self.assertNotIn("{{", html)
+
+    def test_ordinal(self):
+        self.assertEqual([update.ordinal(n) for n in (2, 3, 4, 11, 12, 13, 21, 22, 103)],
+                         ["2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "103rd"])
+
+
 class ValidationTest(unittest.TestCase):
     def setUp(self):
         self.ano = lambda d: 0.5

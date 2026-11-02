@@ -5,9 +5,10 @@
 2. Validate it (header, continuous dates, freshness).
 3. Add the stored pre-industrial (1850-1900) offset for each calendar day
    from offsets.csv. The offsets are NOT recalculated here.
-4. Compute 30/90/180/365-day running means and the calendar-year-to-date mean.
+4. Compute 30/90/180/365-day running means, the calendar-year-to-date mean
+   and the mean of every complete calendar year.
 5. Write the dashboard (site/index.html), the full computed series
-   (site/data/series.csv) and the latest values (site/data/latest.json and
+   (site/data/series.csv), annual means (site/data/annual.csv) and the latest values (site/data/latest.json and
    data/latest.json, which is committed to keep the repo active).
 
 Standard library only. Exits non-zero on any data problem so the scheduled
@@ -20,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import calendar
 import csv
 import datetime as dt
 import html
@@ -42,6 +44,7 @@ TREND_YEARS = 5                # history shown in the trend chart
 DAILY_DAYS = 60                # days shown in the daily chart
 MAX_AGE_DAYS = 10              # fail if the newest value is older than this
 PARIS_LEVEL = 1.5
+WARMEST_LIST = 5               # rows in the warmest-years table
 
 
 class DataError(Exception):
@@ -142,6 +145,28 @@ def ytd_mean(rows: list[dict], end: dt.date) -> tuple[float, dt.date]:
     return sum(vals) / len(vals), start
 
 
+def annual_means(rows: list[dict], latest: dt.date) -> list[dict]:
+    """Mean of each COMPLETE calendar year before the year of the latest data point."""
+    sums: dict[int, list] = {}
+    for r in rows:
+        y = r["date"].year
+        if y >= latest.year:
+            continue
+        b = sums.setdefault(y, [0.0, 0.0, 0])
+        b[0] += r["pi"]
+        b[1] += r["ano"]
+        b[2] += 1
+    out = []
+    for y in sorted(sums):
+        pi_sum, ano_sum, n = sums[y]
+        if n == (366 if calendar.isleap(y) else 365):   # skip a partial first year
+            out.append({"year": y, "pi": pi_sum / n, "ano": ano_sum / n, "days": n})
+    ranked = sorted(out, key=lambda a: a["pi"], reverse=True)
+    for i, a in enumerate(ranked, start=1):
+        a["rank"] = i
+    return out
+
+
 def compute(rows: list[dict]) -> dict:
     pis = [r["pi"] for r in rows]
     means = {n: rolling_means(pis, n) for n in WINDOWS}
@@ -182,6 +207,7 @@ def compute(rows: list[dict]) -> dict:
         trend_start = one_year_earlier(trend_start)
     trend = [r for r in rows if r["date"] > trend_start and r["m365"] is not None]
     daily = rows[-DAILY_DAYS:]
+    annual = annual_means(rows, last["date"])
 
     return {
         "generated_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
@@ -198,6 +224,11 @@ def compute(rows: list[dict]) -> dict:
             "values": [round(r["pi"], 3) for r in daily],
             "status": [r["status"] for r in daily],
         },
+        "annual_rows": annual,
+        "annual": {
+            "years": [a["year"] for a in annual],
+            "values": [round(a["pi"], 3) for a in annual],
+        },
     }
 
 
@@ -207,6 +238,13 @@ def fmt_signed(v: float | None, digits: int = 2) -> str:
     if v is None:
         return "n/a"
     return f"{v:+.{digits}f}".replace("-", "−")
+
+
+def ordinal(n: int) -> str:
+    if n == 1:
+        return ""
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
 
 
 def fmt_date(iso: str) -> str:
@@ -233,7 +271,19 @@ def write_series_csv(rows: list[dict], path: Path) -> None:
                        + ["" if r[f"m{n}"] is None else f"{r[f'm{n}']:.3f}" for n in WINDOWS])
 
 
+def write_annual_csv(annual: list[dict], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["year", "days", "anomaly_1991_2020_c", "anomaly_1850_1900_c", "rank_warmest"])
+        for a in annual:
+            w.writerow([a["year"], a["days"], f"{a['ano']:.3f}", f"{a['pi']:.3f}", a["rank"]])
+
+
 def latest_json(result: dict) -> dict:
+    annual = result["annual_rows"]
+    last_year = annual[-1] if annual else None
+    warmest = min(annual, key=lambda a: a["rank"]) if annual else None
     return {
         "latest_date": result["latest_date"],
         "latest_status": result["latest_status"],
@@ -244,6 +294,9 @@ def latest_json(result: dict) -> dict:
         "means": {t["key"]: {"value": round(t["value"], 3), "start": t["start"], "end": t["end"],
                              "change_vs_1y_earlier": None if t["change_1y"] is None else round(t["change_1y"], 3)}
                   for t in result["tiles"]},
+        "last_complete_year": None if not last_year else
+            {"year": last_year["year"], "value": round(last_year["pi"], 3), "rank_warmest": last_year["rank"]},
+        "warmest_year": None if not warmest else {"year": warmest["year"], "value": round(warmest["pi"], 3)},
         "source": SOURCE_URL,
     }
 
@@ -260,7 +313,20 @@ def render_html(result: dict) -> str:
             f'<div class="tile-change">{fmt_signed(t["change_1y"])} °C vs a year earlier</div>'
             f'</div>'
         )
-    data_json = json.dumps({"trend": result["trend"], "daily": result["daily"], "paris": PARIS_LEVEL,
+    annual = result["annual_rows"]
+    ranked = sorted(annual, key=lambda a: a["rank"])
+    warmest, last_year = ranked[0], annual[-1]
+    if last_year is warmest:
+        sentence = f"{last_year['year']} was the warmest year in the record, at {fmt_signed(last_year['pi'])} \u00b0C."
+    else:
+        sentence = (f"{warmest['year']} is the warmest year in the record, at {fmt_signed(warmest['pi'])} \u00b0C. "
+                    f"{last_year['year']} was {fmt_signed(last_year['pi'])} \u00b0C, "
+                    f"the {ordinal(last_year['rank'])} warmest.")
+    table_rows = "\n".join(
+        f"<tr><td>{a['rank']}</td><td>{a['year']}</td><td>{fmt_signed(a['pi'])}</td><td>{fmt_signed(a['ano'])}</td></tr>"
+        for a in ranked[:WARMEST_LIST])
+    data_json = json.dumps({"trend": result["trend"], "daily": result["daily"], "annual": result["annual"],
+                            "record_year": warmest["year"], "paris": PARIS_LEVEL,
                             "windows": WINDOWS}).replace("</", "<\\/")
     prelim = " (preliminary)" if result["latest_status"] == "PRELIMINARY" else ""
     year = dt.date.fromisoformat(result["latest_date"]).year
@@ -272,6 +338,11 @@ def render_html(result: dict) -> str:
             .replace("{{SOURCE_URL}}", SOURCE_URL)
             .replace("{{TREND_YEARS}}", str(TREND_YEARS))
             .replace("{{DAILY_DAYS}}", str(DAILY_DAYS))
+            .replace("{{ANNUAL_FIRST}}", str(annual[0]["year"]))
+            .replace("{{ANNUAL_LAST}}", str(last_year["year"]))
+            .replace("{{ANNUAL_SENTENCE}}", html.escape(sentence))
+            .replace("{{WARMEST_N}}", str(min(WARMEST_LIST, len(ranked))))
+            .replace("{{WARMEST_ROWS}}", table_rows)
             .replace("{{DATA}}", data_json))
 
 
@@ -313,6 +384,11 @@ HTML_TEMPLATE = r"""<!doctype html>
   footer { border-top: 1px solid var(--track); padding-top: 16px; font-size: 12px; }
   footer p { margin: 0 0 8px; }
   a { color: var(--accent); }
+  .rank { border-collapse: collapse; margin-top: 20px; font-size: 13.5px; min-width: 320px; }
+  .rank caption { text-align: left; font-weight: 700; margin-bottom: 6px; }
+  .rank th, .rank td { padding: 6px 16px 6px 0; border-bottom: 1px solid var(--track); text-align: left; }
+  .rank th { font-weight: 600; color: var(--muted); }
+  .rank td:nth-child(3), .rank td:nth-child(4), .rank th:nth-child(3), .rank th:nth-child(4) { text-align: right; }
   @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (max-width: 480px) { h1 { font-size: 24px; } .tile-value { font-size: 28px; } .chart-box { height: 300px; } }
 </style>
@@ -343,10 +419,23 @@ HTML_TEMPLATE = r"""<!doctype html>
     <div class="chart-box short"><canvas id="daily" role="img" aria-label="Daily temperature anomalies over the last {{DAILY_DAYS}} days"></canvas></div>
   </section>
 
+  <section class="card">
+    <h2>Annual Averages, {{ANNUAL_FIRST}}&ndash;{{ANNUAL_LAST}}</h2>
+    <p>{{ANNUAL_SENTENCE}} Each bar is a complete calendar year; the warmest is highlighted. ERA5 values before about 1950 rest on fewer observations and are less certain. <a href="data/annual.csv">Download annual values (CSV)</a>.</p>
+    <div class="chart-box"><canvas id="annual" role="img" aria-label="Annual mean temperature anomalies {{ANNUAL_FIRST}} to {{ANNUAL_LAST}}"></canvas></div>
+    <table class="rank">
+      <caption>Warmest {{WARMEST_N}} Years</caption>
+      <thead><tr><th>Rank</th><th>Year</th><th>vs 1850&ndash;1900 (&deg;C)</th><th>vs 1991&ndash;2020 (&deg;C)</th></tr></thead>
+      <tbody>
+{{WARMEST_ROWS}}
+      </tbody>
+    </table>
+  </section>
+
   <div class="note"><strong>Reading these numbers:</strong> the Paris Agreement's 1.5 &deg;C limit refers to warming averaged over about 20 years. A 30-day, 365-day or calendar-year value above 1.5 &deg;C is not, on its own, a breach of that limit.</div>
 
   <footer>
-    <p><strong>Method.</strong> ERA5 daily global mean 2 m air temperature anomalies relative to 1991&ndash;2020, from <a href="https://pulse.climate.copernicus.eu/">Copernicus Climate Pulse</a> (<a href="{{SOURCE_URL}}">data file</a>). Converted to the 1850&ndash;1900 baseline with the C3S daily offset (0.79&ndash;0.97 &deg;C by day of year; <a href="https://climate.copernicus.eu/climate-bulletin-about-data-and-analysis">C3S method</a>). Pre-industrial values carry about &plusmn;0.1 &deg;C uncertainty from the offset. <a href="data/series.csv">Download the full series (CSV)</a>.</p>
+    <p><strong>Method.</strong> ERA5 daily global mean 2 m air temperature anomalies relative to 1991&ndash;2020, from <a href="https://pulse.climate.copernicus.eu/">Copernicus Climate Pulse</a> (<a href="{{SOURCE_URL}}">data file</a>). Converted to the 1850&ndash;1900 baseline with the C3S daily offset (0.79&ndash;0.97 &deg;C by day of year; <a href="https://climate.copernicus.eu/climate-bulletin-about-data-and-analysis">C3S method</a>). Pre-industrial values carry about &plusmn;0.1 &deg;C uncertainty from the offset. <a href="data/series.csv">Download the full daily series (CSV)</a>.</p>
     <p>Data: ERA5 daily global surface air temperature via Copernicus Climate Pulse (C3S/ECMWF). Contains modified Copernicus Climate Change Service information {{YEAR}}. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.</p>
   </footer>
 </div>
@@ -426,6 +515,30 @@ HTML_TEMPLATE = r"""<!doctype html>
       }
     }
   });
+
+  // Annual chart: one bar per complete year, warmest year highlighted.
+  new Chart(document.getElementById('annual'), {
+    type: 'bar',
+    data: { labels: D.annual.years, datasets: [
+      { label: 'Annual mean', data: D.annual.values, borderRadius: 2, borderSkipped: false, categoryPercentage: 0.9, barPercentage: 0.9,
+        backgroundColor: D.annual.years.map(function (y) { return y === D.record_year ? C.accent : C.ink; }) },
+      { type: 'line', label: '1.5 \u00b0C', data: D.annual.years.map(function () { return D.paris; }),
+        borderColor: C.red, borderDash: [6, 5], borderWidth: 1.5, pointRadius: 0 } ] },
+    options: {
+      maintainAspectRatio: false, animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { title: function (it) { return String(it[0].label); },
+                                label: function (it) { return it.datasetIndex === 1 ? '1.5 \u00b0C reference' : signed(it.parsed.y); } } }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0,
+             callback: function (v, i) { var y = D.annual.years[i]; return y % 10 === 0 ? String(y) : null; } } },
+        y: { beginAtZero: true, grid: { color: C.grid }, ticks: { callback: function (v) { return v.toFixed(1) + '\u00b0'; } },
+             title: { display: true, text: '\u00b0C above 1850\u20131900' } }
+      }
+    }
+  });
 })();
 </script>
 </body>
@@ -447,6 +560,7 @@ def build(text: str, today: dt.date | None = None, site_dir: Path = SITE_DIR,
     site_dir.mkdir(parents=True)
     (site_dir / "index.html").write_text(render_html(result), encoding="utf-8")
     write_series_csv(rows, site_dir / "data" / "series.csv")
+    write_annual_csv(result["annual_rows"], site_dir / "data" / "annual.csv")
     latest = json.dumps(latest_json(result), indent=2) + "\n"
     (site_dir / "data" / "latest.json").write_text(latest, encoding="utf-8")
     repo_latest.parent.mkdir(parents=True, exist_ok=True)

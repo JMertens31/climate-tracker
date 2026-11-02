@@ -14,6 +14,8 @@ It shows five running means, each ending on the latest available day:
 | 365-day (headline) | Mean of the last 365 daily values |
 | Year to date | Mean from 1 January of the current year to the latest day |
 
+It also shows the **annual average of every complete calendar year from 1940** (the start of the ERA5 record) with the warmest five years ranked. A year appears once all its days are in the data, normally in the first days of January.
+
 Each is also compared with the same window one year earlier.
 
 ## How It Works
@@ -23,7 +25,7 @@ A GitHub Actions workflow (`.github/workflows/daily.yml`) runs once a day at 12:
 1. Runs the tests in `tests/`.
 2. `update.py` downloads the Climate Pulse daily CSV and checks it: expected columns, no missing dates, newest value no more than 10 days old. Any failure stops the run, and GitHub emails the person who last edited the workflow.
 3. Adds the stored pre-industrial offset for each calendar day from `offsets.csv`.
-4. Computes the running means and builds the site in `site/`: `index.html`, `data/series.csv` (full computed series) and `data/latest.json`.
+4. Computes the running means and annual averages, and builds the site in `site/`: `index.html`, `data/series.csv` (full daily series), `data/annual.csv` (complete calendar years) and `data/latest.json`.
 5. Commits `data/latest.json` to the repo (one small change per day, which also keeps the schedule from being switched off for inactivity).
 6. Publishes `site/` to GitHub Pages.
 
@@ -45,6 +47,7 @@ No API keys or secrets are needed. The script uses only the Python standard libr
 - **Paris Agreement:** the 1.5 °C limit refers to warming averaged over about 20 years. A 30-day, 365-day or calendar-year value above 1.5 °C is not, on its own, a breach.
 - **Uncertainty:** the pre-industrial offset comes from other datasets, not ERA5, so values above pre-industrial carry roughly ±0.1 °C uncertainty. Differences between windows and years are more precise than the absolute level.
 - **Preliminary data:** the latest day may change slightly. Each run reprocesses the whole series, so revisions are picked up automatically.
+- **Early years:** ERA5 before about 1950 rests on far fewer observations, especially over the oceans and during the Second World War, so the 1940s values are less certain than later ones.
 - **One dataset:** ERA5 is a reanalysis. Other records (NASA GISTEMP, NOAA, HadCRUT5, Berkeley Earth) differ by a few hundredths of a degree.
 
 ## Running It by Hand
