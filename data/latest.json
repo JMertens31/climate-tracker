@@ -1,7 +1,7 @@
 {
   "latest_date": "2026-10-31",
   "latest_status": "PRELIMINARY",
-  "generated_utc": "2026-11-02 19:50 UTC",
+  "generated_utc": "2026-11-02 20:01 UTC",
   "baseline": "1850-1900 (C3S daily offset applied to ERA5 1991-2020 anomalies)",
   "units": "degC",
   "latest_daily": 1.966,
@@ -36,6 +36,15 @@
       "end": "2026-10-31",
       "change_vs_1y_earlier": 0.05
     }
+  },
+  "last_complete_year": {
+    "year": 2025,
+    "value": 1.472,
+    "rank_warmest": 3
+  },
+  "warmest_year": {
+    "year": 2024,
+    "value": 1.599
   },
   "source": "https://sites.ecmwf.int/data/climatepulse/data/series/era5_daily_series_2t_global.csv"
 }
