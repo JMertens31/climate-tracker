@@ -4,7 +4,7 @@ A daily-updated dashboard of global surface air temperature above the 1850–190
 
 **Live dashboard:** `https://<owner>.github.io/<repo>/` (replace with your Pages URL)
 
-It shows five running means, each ending on the latest available day:
+The top chart shows five running means as bars, each ending on the latest available day, with the 365-day mean in blue and dashed lines at 1.5 °C, 2 °C and the 1991–2020 average:
 
 | Measure | Definition |
 | --- | --- |
@@ -56,6 +56,7 @@ No API keys or secrets are needed. The script uses only the Python standard libr
 - **Uncertainty:** the pre-industrial offset comes from other datasets, not ERA5, so values above pre-industrial carry roughly ±0.1 °C uncertainty. Differences between windows and years are more precise than the absolute level.
 - **Preliminary data:** the latest day may change slightly. Each run reprocesses the whole series, so revisions are picked up automatically.
 - **Early years:** ERA5 before about 1950 rests on far fewer observations, especially over the oceans and during the Second World War, so the 1940s values are less certain than later ones.
+- **The 1991–2020 line:** it is the 1991–2020 annual average, +0.88 °C above 1850–1900. That is exact for the 365-day and annual values. For shorter windows the matching 1991–2020 level shifts with the season (about 0.79–0.97 °C), so the line is a guide there, not an exact baseline.
 - **One dataset:** ERA5 is a reanalysis. Other records (NASA GISTEMP, NOAA, HadCRUT5, Berkeley Earth) differ by a few hundredths of a degree.
 
 ## Running It by Hand
@@ -68,6 +69,7 @@ No API keys or secrets are needed. The script uses only the Python standard libr
 
 | To change | Edit |
 | --- | --- |
+| Reference periods drawn as dashed lines (for example, add `("1981\u20132010 average", 1981, 2010)`) | `BASELINES` at the top of `update.py`; any period from 1941 onward works |
 | Window lengths, chart history, freshness limit | Constants at the top of `update.py` (`WINDOWS`, `TREND_YEARS`, `DAILY_DAYS`, `MAX_AGE_DAYS`) |
 | Run time | `cron` line in `.github/workflows/daily.yml` (times are UTC) |
 | Page text and styling | `HTML_TEMPLATE` in `update.py` |

@@ -45,6 +45,11 @@ DAILY_DAYS = 60                # days shown in the daily chart
 MAX_AGE_DAYS = 10              # fail if the newest value is older than this
 PARIS_LEVEL = 1.5
 WARMEST_LIST = 5               # rows in the warmest-years table
+TWO_DEGREES = 2.0
+# Reference periods drawn as dashed lines, as (label, first year, last year).
+# Each must lie inside the ERA5 record (1940 onward). Its level is the mean of
+# the daily pre-industrial anomalies over the period, computed from the data.
+BASELINES = [("1991\u20132020 average", 1991, 2020)]
 
 
 class DataError(Exception):
@@ -197,6 +202,19 @@ def year_context(annual: list[dict]) -> list[dict]:
     return out
 
 
+def baseline_levels(rows: list[dict]) -> list[dict]:
+    """Level of each reference period on the 1850-1900 scale (degC)."""
+    out = []
+    for label, y0, y1 in BASELINES:
+        vals = [r["pi"] for r in rows if y0 <= r["date"].year <= y1]
+        expected = (dt.date(y1, 12, 31) - dt.date(y0, 1, 1)).days + 1
+        if len(vals) != expected:   # period not fully covered: skip the line rather than draw a wrong one
+            print(f"WARNING: baseline {y0}-{y1} not fully covered by the data; line omitted", file=sys.stderr)
+            continue
+        out.append({"label": label, "start": y0, "end": y1, "value": sum(vals) / len(vals)})
+    return out
+
+
 def compute(rows: list[dict]) -> dict:
     pis = [r["pi"] for r in rows]
     means = {n: rolling_means(pis, n) for n in WINDOWS}
@@ -255,6 +273,7 @@ def compute(rows: list[dict]) -> dict:
             "status": [r["status"] for r in daily],
         },
         "annual_rows": annual,
+        "baselines": baseline_levels(rows),
         "annual": {
             "years": [a["year"] for a in annual],
             "values": [round(a["pi"], 3) for a in annual],
@@ -333,17 +352,24 @@ def latest_json(result: dict) -> dict:
 
 
 def render_html(result: dict) -> str:
-    tiles_html = []
-    for t in result["tiles"]:
-        main = " tile--main" if t["key"] == "365d" else ""
-        tiles_html.append(
-            f'<div class="tile{main}">'
-            f'<div class="tile-label">{html.escape(t["label"])}</div>'
-            f'<div class="tile-value">{fmt_signed(t["value"])}<span class="unit">°C</span></div>'
-            f'<div class="tile-period">{html.escape(fmt_range(t["start"], t["end"]))}</div>'
-            f'<div class="tile-change">{fmt_signed(t["change_1y"])} °C vs a year earlier</div>'
-            f'</div>'
-        )
+    tiles = result["tiles"]
+    base = result["baselines"][0] if result["baselines"] else None
+    headline = next(t for t in tiles if t["key"] == "365d")
+    now_sentence = f"The 365-day mean stands at {fmt_signed(headline['value'])} \u00b0C"
+    if base:
+        now_sentence += (f", {abs(headline['value'] - base['value']):.2f} \u00b0C "
+                         f"{'above' if headline['value'] >= base['value'] else 'below'} the "
+                         f"{base['start']}\u2013{base['end']} average")
+    now_sentence += "."
+    changes = " \u00b7 ".join(f"{t['label'].replace(' mean', '')} {fmt_signed(t['change_1y'])} \u00b0C"
+                               for t in tiles)
+    now = {
+        "labels": [t["label"].replace(" mean", "") for t in tiles],
+        "keys": [t["key"] for t in tiles],
+        "values": [round(t["value"], 3) for t in tiles],
+        "periods": [fmt_range(t["start"], t["end"]) for t in tiles],
+        "changes": [None if t["change_1y"] is None else round(t["change_1y"], 3) for t in tiles],
+    }
     annual = result["annual_rows"]
     ranked = sorted(annual, key=lambda a: a["rank"])
     warmest, last_year = ranked[0], annual[-1]
@@ -358,12 +384,16 @@ def render_html(result: dict) -> str:
         for a in ranked[:WARMEST_LIST])
     data_json = json.dumps({"trend": result["trend"], "daily": result["daily"], "annual": result["annual"],
                             "record_year": warmest["year"], "context": result["year_context"],
-                            "paris": PARIS_LEVEL,
+                            "now": now, "paris": PARIS_LEVEL, "two": TWO_DEGREES,
+                            "baselines": [{"label": b["label"], "value": round(b["value"], 3)}
+                                          for b in result["baselines"]],
                             "windows": WINDOWS}).replace("</", "<\\/")
     prelim = " (preliminary)" if result["latest_status"] == "PRELIMINARY" else ""
     year = dt.date.fromisoformat(result["latest_date"]).year
     return (HTML_TEMPLATE
-            .replace("{{TILES}}", "\n".join(tiles_html))
+            .replace("{{NOW_SENTENCE}}", html.escape(now_sentence))
+            .replace("{{NOW_CHANGES}}", html.escape(changes))
+            .replace("{{BASE_NOTE}}", f" and the 1991&ndash;2020 average ({base['value']:+.2f} &deg;C)" if base else "")
             .replace("{{LATEST}}", html.escape(fmt_date(result["latest_date"]) + prelim))
             .replace("{{GENERATED}}", html.escape(result["generated_utc"]))
             .replace("{{YEAR}}", str(year))
@@ -401,17 +431,12 @@ HTML_TEMPLATE = r"""<!doctype html>
   h2 { font-size: 20px; font-weight: 700; margin: 0 0 4px; }
   .lead { margin: 0 0 24px; max-width: 760px; }
   .meta { font-size: 13px; }
-  .tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; margin: 8px 0 40px; }
-  .tile { background: var(--panel); border-radius: 16px; padding: 18px 18px 16px; }
-  .tile--main { background: var(--ink); color: var(--white); }
-  .tile-label { font-weight: 600; font-size: 14px; }
-  .tile-value { font-weight: 800; font-size: 34px; line-height: 1.15; margin: 6px 0 4px; white-space: nowrap; }
-  .tile-value .unit { font-size: 18px; font-weight: 700; margin-left: 2px; }
-  .tile-period, .tile-change { font-size: 12.5px; }
+  .small { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
   .card { margin: 0 0 40px; }
   .card p { margin: 0 0 12px; font-size: 13.5px; }
   .chart-box { position: relative; height: 360px; }
   .chart-box.short { height: 280px; }
+  .chart-box.tall { height: 400px; }
   .note { background: var(--tint); border-radius: 16px; padding: 16px 20px; font-size: 13.5px; margin: 0 0 40px; }
   footer { border-top: 1px solid var(--track); padding-top: 16px; font-size: 12px; }
   footer p { margin: 0 0 8px; }
@@ -432,8 +457,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   .rank th, .rank td { padding: 6px 16px 6px 0; border-bottom: 1px solid var(--track); text-align: left; }
   .rank th { font-weight: 600; color: var(--muted); }
   .rank td:nth-child(3), .rank td:nth-child(4), .rank th:nth-child(3), .rank th:nth-child(4) { text-align: right; }
-  @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-  @media (max-width: 480px) { h1 { font-size: 24px; } .tile-value { font-size: 28px; } .chart-box { height: 300px; } }
+  @media (max-width: 480px) { h1 { font-size: 24px; } .chart-box { height: 300px; } .chart-box.tall { height: 380px; } }
 </style>
 </head>
 <body>
@@ -446,13 +470,16 @@ HTML_TEMPLATE = r"""<!doctype html>
   <h1>Global Temperature <span class="hl">Above Pre-Industrial</span></h1>
   <p class="lead">Running means of daily global surface air temperature, in &deg;C above the 1850&ndash;1900 average. The 365-day mean is the headline figure; shorter windows react to weather and El Ni&ntilde;o.</p>
 
-  <section class="tiles">
-{{TILES}}
+  <section class="card">
+    <h2>Running Means Today</h2>
+    <p>{{NOW_SENTENCE}} Bars show each running mean ending on the latest day; the 365-day mean is in blue. Dashed lines mark 1.5 &deg;C, 2 &deg;C{{BASE_NOTE}}.</p>
+    <div class="chart-box tall"><canvas id="now" role="img" aria-label="Current 30-day, 90-day, 180-day, 365-day and year-to-date mean temperature anomalies"></canvas></div>
+    <p class="small">Change from the same period a year earlier: {{NOW_CHANGES}}.</p>
   </section>
 
   <section class="card">
     <h2>Running Means, Last {{TREND_YEARS}} Years</h2>
-    <p>Each line is the average of the preceding 30, 90, 180 or 365 days. Dashed line: 1.5 &deg;C.</p>
+    <p>Each line is the average of the preceding 30, 90, 180 or 365 days. Dashed lines mark 1.5 &deg;C and the 1991&ndash;2020 average.</p>
     <div class="chart-box"><canvas id="trend" role="img" aria-label="Running mean temperature anomalies over the last {{TREND_YEARS}} years"></canvas></div>
   </section>
 
@@ -496,7 +523,8 @@ HTML_TEMPLATE = r"""<!doctype html>
 (function () {
   var D = {{DATA}};
   // Colour-blind-safe series colours (Okabe-Ito), with the headline series in dark ink.
-  var C = { ink: '#1F2937', blue: '#0072B2', green: '#009E73', orange: '#E69F00', red: '#D55E00', accent: '#2563EB', grid: '#E5E7EB' };
+  var C = { ink: '#1F2937', blue: '#0072B2', green: '#009E73', orange: '#E69F00', red: '#D55E00', darkred: '#991B1B',
+            grey: '#6B7280', accent: '#2563EB', grid: '#E5E7EB' };
   if (typeof Chart === 'undefined') {
     document.querySelectorAll('.chart-box').forEach(function (b) { b.textContent = 'Charts could not load. The numbers above are current.'; });
     return;
@@ -510,22 +538,101 @@ HTML_TEMPLATE = r"""<!doctype html>
   }
   function signed(v) { return (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2) + ' °C'; }
 
-  // Trend chart: 365-day in dark ink (headline), shorter windows in Okabe-Ito colours.
-  var colors = { 365: C.ink, 180: C.blue, 90: C.green, 30: C.orange };
+  // Dashed reference lines across the full plot width, labelled in the right margin.
+  // Lines sit behind the bars and data lines; labels are nudged apart if they would overlap.
+  var font = Chart.defaults.font.family;
+  var REF = { paris: { value: D.paris, label: '1.5 \u00b0C', color: C.red },
+              two: { value: D.two, label: '2 \u00b0C', color: C.darkred },
+              base: D.baselines.length ? { value: D.baselines[0].value, label: '1991\u20132020', color: C.grey } : null };
+  function refs() { return Array.prototype.slice.call(arguments).filter(Boolean); }
+  Chart.register({
+    id: 'refLines',
+    beforeDatasetsDraw: function (chart, args, opts) {
+      var a = chart.chartArea, y = chart.scales.y, ctx = chart.ctx;
+      (opts.lines || []).forEach(function (l) {
+        var py = y.getPixelForValue(l.value);
+        if (py < a.top - 1 || py > a.bottom + 1) { return; }
+        ctx.save(); ctx.strokeStyle = l.color; ctx.lineWidth = 1.5; ctx.setLineDash([6, 5]);
+        ctx.beginPath(); ctx.moveTo(a.left, py); ctx.lineTo(a.right, py); ctx.stroke(); ctx.restore();
+      });
+    },
+    afterDraw: function (chart, args, opts) {
+      var a = chart.chartArea, y = chart.scales.y, ctx = chart.ctx, placed = [];
+      (opts.lines || []).slice().sort(function (p, q) { return q.value - p.value; }).forEach(function (l) {
+        var py = y.getPixelForValue(l.value);
+        if (py < a.top - 1 || py > a.bottom + 1) { return; }
+        placed.forEach(function (q) { if (Math.abs(py - q) < 13) { py = q + 13; } });
+        placed.push(py);
+        ctx.save(); ctx.fillStyle = l.color; ctx.font = '600 11.5px ' + font;
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(l.label, a.right + 6, py); ctx.restore();
+      });
+    }
+  });
+  var refPad = { right: 78 };
+
+  // Running means today: one bar per window, 365-day in blue, value printed above each bar.
+  var nowColors = D.now.keys.map(function (k) { return k === '365d' ? C.accent : C.ink; });
+  new Chart(document.getElementById('now'), {
+    type: 'bar',
+    data: { labels: D.now.labels, datasets: [
+      { label: 'Running mean', data: D.now.values, backgroundColor: nowColors, borderRadius: 6,
+        borderSkipped: false, maxBarThickness: 96 } ] },
+    plugins: [{
+      id: 'barValues',
+      afterDatasetsDraw: function (chart) {
+        var ctx = chart.ctx;
+        var size = chart.width < 560 ? 12 : 15;
+        chart.getDatasetMeta(0).data.forEach(function (bar, i) {
+          ctx.save(); ctx.fillStyle = C.ink; ctx.font = '700 ' + size + 'px ' + font;
+          ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+          ctx.fillText(signed(D.now.values[i]).replace(' °C', '\u00b0'), bar.x, bar.y - 6); ctx.restore();
+        });
+      }
+    }],
+    options: {
+      maintainAspectRatio: false, animation: false, layout: { padding: refPad },
+      plugins: {
+        legend: { display: false },
+        refLines: { lines: refs(REF.two, REF.paris, REF.base) },
+        tooltip: { callbacks: {
+          title: function (it) { return it[0].label + ' mean, ' + D.now.periods[it[0].dataIndex]; },
+          label: function (it) {
+            var c = D.now.changes[it.dataIndex];
+            return [signed(it.parsed.y) + ' above 1850\u20131900'].concat(c === null ? [] : [signed(c) + ' vs a year earlier']);
+          } } }
+      },
+      scales: {
+        x: { grid: { display: false },
+             ticks: { autoSkip: false, maxRotation: 0, font: { size: 13, weight: '600' },
+                      callback: function (v, i) {
+                        // Narrow screens: short labels only (dates are in the tooltip).
+                        if (this.chart.width < 560) { return D.now.keys[i] === 'ytd' ? 'YTD' : D.now.keys[i]; }
+                        return [D.now.labels[i], D.now.periods[i]];
+                      } } },
+        y: { min: 0, max: Math.ceil((Math.max(D.two, Math.max.apply(null, D.now.values)) + 0.2) * 10) / 10,
+             grid: { color: C.grid },
+             ticks: { stepSize: 0.5, callback: function (v) { return Math.abs(v * 2 - Math.round(v * 2)) < 1e-9 ? v.toFixed(1) + '\u00b0' : ''; } },
+             title: { display: true, text: '\u00b0C above 1850\u20131900' } }
+      }
+    }
+  });
+
+  // Trend chart: 365-day in blue (headline), shorter windows in Okabe-Ito colours.
+  var colors = { 365: C.accent, 180: C.green, 90: C.orange, 30: C.grey };
   var order = [365, 180, 90, 30];
   var trendSets = order.map(function (n) {
     return { label: n + '-day', data: D.trend['m' + n], borderColor: colors[n], backgroundColor: colors[n],
              borderWidth: n === 365 ? 3 : 1.5, pointRadius: 0, tension: 0, order: n === 365 ? 0 : 1 };
   });
-  trendSets.push({ label: '1.5 °C', data: D.trend.dates.map(function () { return D.paris; }),
-                   borderColor: C.red, borderDash: [6, 5], borderWidth: 1.5, pointRadius: 0, order: 2 });
+  var trendMin = Math.min.apply(null, D.trend.m30.concat(REF.base ? [REF.base.value] : []));
   new Chart(document.getElementById('trend'), {
     type: 'line',
     data: { labels: D.trend.dates, datasets: trendSets },
     options: {
-      maintainAspectRatio: false, animation: false,
+      maintainAspectRatio: false, animation: false, layout: { padding: refPad },
       interaction: { mode: 'index', intersect: false },
       plugins: {
+        refLines: { lines: refs(REF.paris, REF.base) },
         legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'line', boxWidth: 28 } },
         tooltip: { callbacks: { title: function (it) { return label(it[0].label, true); },
                                 label: function (it) { return it.dataset.label + ': ' + signed(it.parsed.y); } } }
@@ -533,7 +640,8 @@ HTML_TEMPLATE = r"""<!doctype html>
       scales: {
         x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0,
              callback: function (v, i) { var d = D.trend.dates[i]; return d.slice(5) === '01-01' ? d.slice(0, 4) : null; } } },
-        y: { grid: { color: C.grid }, ticks: { callback: function (v) { return v.toFixed(1) + '°'; } },
+        y: { suggestedMin: Math.floor((trendMin - 0.05) * 10) / 10, grid: { color: C.grid },
+             ticks: { callback: function (v) { return v.toFixed(1) + '°'; } },
              title: { display: true, text: '°C above 1850–1900' } }
       }
     }
@@ -545,16 +653,14 @@ HTML_TEMPLATE = r"""<!doctype html>
     type: 'bar',
     data: { labels: D.daily.dates, datasets: [
       { label: 'Daily anomaly', data: D.daily.values, borderRadius: 4, borderSkipped: false,
-        backgroundColor: D.daily.values.map(function (_, i) { return i === n - 1 ? C.accent : C.ink; }) },
-      { type: 'line', label: '1.5 °C', data: D.daily.dates.map(function () { return D.paris; }),
-        borderColor: C.red, borderDash: [6, 5], borderWidth: 1.5, pointRadius: 0 } ] },
+        backgroundColor: D.daily.values.map(function (_, i) { return i === n - 1 ? C.accent : C.ink; }) } ] },
     options: {
-      maintainAspectRatio: false, animation: false,
+      maintainAspectRatio: false, animation: false, layout: { padding: refPad },
       plugins: {
         legend: { display: false },
+        refLines: { lines: [REF.paris] },
         tooltip: { callbacks: { title: function (it) { return label(it[0].label, true); },
                                 label: function (it) {
-                                  if (it.datasetIndex === 1) return '1.5 °C reference';
                                   var s = D.daily.status[it.dataIndex] === 'PRELIMINARY' ? ' (preliminary)' : '';
                                   return signed(it.parsed.y) + s; } } }
       },
@@ -578,11 +684,9 @@ HTML_TEMPLATE = r"""<!doctype html>
     type: 'bar',
     data: { labels: D.annual.years, datasets: [
       { label: 'Annual mean', data: D.annual.values, borderRadius: 2, borderSkipped: false, categoryPercentage: 0.9, barPercentage: 0.9,
-        backgroundColor: barColors() },
-      { type: 'line', label: '1.5 \u00b0C', data: D.annual.years.map(function () { return D.paris; }),
-        borderColor: C.red, borderDash: [6, 5], borderWidth: 1.5, pointRadius: 0 } ] },
+        backgroundColor: barColors() } ] },
     options: {
-      maintainAspectRatio: false, animation: false,
+      maintainAspectRatio: false, animation: false, layout: { padding: refPad },
       onClick: function (evt, els) {
         var bar = els.filter(function (e) { return e.datasetIndex === 0; })[0];
         if (bar) { selectYear(D.annual.years[bar.index]); }
@@ -590,8 +694,9 @@ HTML_TEMPLATE = r"""<!doctype html>
       onHover: function (evt, els) { evt.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
       plugins: {
         legend: { display: false },
+        refLines: { lines: [REF.paris] },
         tooltip: { callbacks: { title: function (it) { return String(it[0].label); },
-                                label: function (it) { return it.datasetIndex === 1 ? '1.5 \u00b0C reference' : signed(it.parsed.y); } } }
+                                label: function (it) { return signed(it.parsed.y); } } }
       },
       scales: {
         x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0,

@@ -206,6 +206,44 @@ class YearContextTest(unittest.TestCase):
         self.assertEqual(self.ctx[2001]["later_warmer"], 1)  # 2005's tie does not count as warmer
 
 
+class BaselineTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.site = Path(self.tmp.name) / "site"
+        self.latest = Path(self.tmp.name) / "data" / "latest.json"
+        self.ano = lambda d: round(0.02 * (d.year - 2005) + 0.1 * math.cos(d.toordinal() / 29.0), 3)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_1991_2020_level(self):
+        text = synthetic_csv(dt.date(1985, 1, 1), dt.date(2026, 10, 31), self.ano)
+        res = update.build(text, today=dt.date(2026, 11, 2), site_dir=self.site, repo_latest=self.latest)
+        d, vals = dt.date(1991, 1, 1), []
+        while d <= dt.date(2020, 12, 31):
+            vals.append(round(self.ano(d), 3) + c3s_offset(d))
+            d += dt.timedelta(days=1)
+        self.assertEqual(len(res["baselines"]), 1)
+        self.assertAlmostEqual(res["baselines"][0]["value"], sum(vals) / len(vals), places=6)
+        html = (self.site / "index.html").read_text()
+        self.assertIn("Running Means Today", html)
+        self.assertIn("the 1991&ndash;2020 average (", html)
+        self.assertNotIn("{{", html)
+
+    def test_real_anomalies_put_baseline_at_offset_mean(self):
+        # If every 1991-2020 anomaly is zero, the baseline sits exactly at the mean offset (0.88).
+        text = synthetic_csv(dt.date(1985, 1, 1), dt.date(2026, 10, 31),
+                             lambda d: 0.0 if 1991 <= d.year <= 2020 else 0.5)
+        res = update.build(text, today=dt.date(2026, 11, 2), site_dir=self.site, repo_latest=self.latest)
+        self.assertAlmostEqual(res["baselines"][0]["value"], 0.88, places=3)
+
+    def test_short_record_omits_line(self):
+        text = synthetic_csv(dt.date(2015, 1, 1), dt.date(2026, 10, 31), self.ano)
+        res = update.build(text, today=dt.date(2026, 11, 2), site_dir=self.site, repo_latest=self.latest)
+        self.assertEqual(res["baselines"], [])
+        self.assertNotIn("{{", (self.site / "index.html").read_text())
+
+
 class ValidationTest(unittest.TestCase):
     def setUp(self):
         self.ano = lambda d: 0.5
