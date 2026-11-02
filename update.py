@@ -167,6 +167,36 @@ def annual_means(rows: list[dict], latest: dt.date) -> list[dict]:
     return out
 
 
+def year_context(annual: list[dict]) -> list[dict]:
+    """For each complete year, how it ranked when it ended and how later years compare.
+
+    Values are compared at the 0.001 degC precision shown on the page, so the
+    sentences never contradict the displayed numbers. A year only counts as
+    warmer or colder if it differs at that precision; equal values are ties.
+    """
+    vals = [round(a["pi"], 3) for a in annual]
+    out = []
+    for i, a in enumerate(annual):
+        v = vals[i]
+        before, after = vals[:i], vals[i + 1:]
+        out.append({
+            "year": a["year"],
+            "value": v,
+            # Rank among all years from the start of the record up to and including this one.
+            "rank_then": 1 + sum(x > v for x in before),
+            "years_then": i + 1,
+            "tied_then": any(x == v for x in before),
+            # Later complete years.
+            "later_years": len(after),
+            "later_warmer": sum(x > v for x in after),
+            "later_colder": sum(x < v for x in after),
+            # Rank among all complete years in the record today.
+            "rank_now": 1 + sum(x > v for x in vals[:i] + after),
+            "years_now": len(vals),
+        })
+    return out
+
+
 def compute(rows: list[dict]) -> dict:
     pis = [r["pi"] for r in rows]
     means = {n: rolling_means(pis, n) for n in WINDOWS}
@@ -229,6 +259,7 @@ def compute(rows: list[dict]) -> dict:
             "years": [a["year"] for a in annual],
             "values": [round(a["pi"], 3) for a in annual],
         },
+        "year_context": year_context(annual),
     }
 
 
@@ -326,7 +357,8 @@ def render_html(result: dict) -> str:
         f"<tr><td>{a['rank']}</td><td>{a['year']}</td><td>{fmt_signed(a['pi'])}</td><td>{fmt_signed(a['ano'])}</td></tr>"
         for a in ranked[:WARMEST_LIST])
     data_json = json.dumps({"trend": result["trend"], "daily": result["daily"], "annual": result["annual"],
-                            "record_year": warmest["year"], "paris": PARIS_LEVEL,
+                            "record_year": warmest["year"], "context": result["year_context"],
+                            "paris": PARIS_LEVEL,
                             "windows": WINDOWS}).replace("</", "<\\/")
     prelim = " (preliminary)" if result["latest_status"] == "PRELIMINARY" else ""
     year = dt.date.fromisoformat(result["latest_date"]).year
@@ -384,6 +416,17 @@ HTML_TEMPLATE = r"""<!doctype html>
   footer { border-top: 1px solid var(--track); padding-top: 16px; font-size: 12px; }
   footer p { margin: 0 0 8px; }
   a { color: var(--accent); }
+  .lookup { background: var(--panel); border-radius: 16px; padding: 20px; margin-top: 24px; }
+  .lookup h3 { font-size: 17px; margin: 0 0 4px; }
+  .lookup .hint { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
+  .lookup label { font-weight: 600; margin-right: 8px; }
+  .lookup select { font: inherit; font-size: 15px; padding: 6px 10px; border: 1px solid var(--track);
+                   border-radius: 8px; background: var(--white); color: var(--ink); }
+  .lookup-result { margin-top: 16px; }
+  .lookup-value { font-size: 26px; font-weight: 800; line-height: 1.2; }
+  .lookup-value span { font-size: 15px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+  .lookup-result ul { margin: 10px 0 0; padding-left: 20px; }
+  .lookup-result li { margin-bottom: 6px; }
   .rank { border-collapse: collapse; margin-top: 20px; font-size: 13.5px; min-width: 320px; }
   .rank caption { text-align: left; font-weight: 700; margin-bottom: 6px; }
   .rank th, .rank td { padding: 6px 16px 6px 0; border-bottom: 1px solid var(--track); text-align: left; }
@@ -421,8 +464,16 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   <section class="card">
     <h2>Annual Averages, {{ANNUAL_FIRST}}&ndash;{{ANNUAL_LAST}}</h2>
-    <p>{{ANNUAL_SENTENCE}} Each bar is a complete calendar year; the warmest is highlighted. ERA5 values before about 1950 rest on fewer observations and are less certain. <a href="data/annual.csv">Download annual values (CSV)</a>.</p>
+    <p>{{ANNUAL_SENTENCE}} Each bar is a complete calendar year; the warmest is in blue and the year selected below in orange. ERA5 values before about 1950 rest on fewer observations and are less certain. <a href="data/annual.csv">Download annual values (CSV)</a>.</p>
     <div class="chart-box"><canvas id="annual" role="img" aria-label="Annual mean temperature anomalies {{ANNUAL_FIRST}} to {{ANNUAL_LAST}}"></canvas></div>
+
+    <div class="lookup">
+      <h3>How Does a Year Compare?</h3>
+      <p class="hint">Choose a year, or click its bar in the chart above.</p>
+      <label for="year-select">Year</label>
+      <select id="year-select"></select>
+      <div id="year-result" class="lookup-result" aria-live="polite"></div>
+    </div>
     <table class="rank">
       <caption>Warmest {{WARMEST_N}} Years</caption>
       <thead><tr><th>Rank</th><th>Year</th><th>vs 1850&ndash;1900 (&deg;C)</th><th>vs 1991&ndash;2020 (&deg;C)</th></tr></thead>
@@ -516,16 +567,27 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
   });
 
-  // Annual chart: one bar per complete year, warmest year highlighted.
-  new Chart(document.getElementById('annual'), {
+  // Annual chart: one bar per complete year, warmest year highlighted, selected year in orange.
+  var selectedYear = null;
+  function barColors() {
+    return D.annual.years.map(function (y) {
+      return y === selectedYear ? C.orange : (y === D.record_year ? C.accent : C.ink);
+    });
+  }
+  var annualChart = new Chart(document.getElementById('annual'), {
     type: 'bar',
     data: { labels: D.annual.years, datasets: [
       { label: 'Annual mean', data: D.annual.values, borderRadius: 2, borderSkipped: false, categoryPercentage: 0.9, barPercentage: 0.9,
-        backgroundColor: D.annual.years.map(function (y) { return y === D.record_year ? C.accent : C.ink; }) },
+        backgroundColor: barColors() },
       { type: 'line', label: '1.5 \u00b0C', data: D.annual.years.map(function () { return D.paris; }),
         borderColor: C.red, borderDash: [6, 5], borderWidth: 1.5, pointRadius: 0 } ] },
     options: {
       maintainAspectRatio: false, animation: false,
+      onClick: function (evt, els) {
+        var bar = els.filter(function (e) { return e.datasetIndex === 0; })[0];
+        if (bar) { selectYear(D.annual.years[bar.index]); }
+      },
+      onHover: function (evt, els) { evt.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
       plugins: {
         legend: { display: false },
         tooltip: { callbacks: { title: function (it) { return String(it[0].label); },
@@ -539,6 +601,76 @@ HTML_TEMPLATE = r"""<!doctype html>
       }
     }
   });
+
+  // Year lookup: turns the ranks computed in update.py into sentences.
+  function ord(n) {
+    var s = (n % 100 >= 11 && n % 100 <= 13) ? 'th' : ({ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th');
+    return n + s;
+  }
+  function years(n) { return n === 1 ? '1 year' : n + ' years'; }
+  var first = D.annual.years[0], last = D.annual.years[D.annual.years.length - 1];
+
+  function describe(c) {
+    var out = [], tie = c.tied_then ? ' (tied)' : '', k = c.years_then - 1;
+    var earlier = k === 1 ? first : (k === 2 ? 'both earlier years' : 'all ' + k + ' earlier years back to ' + first);
+    // 1) Standing when the year ended.
+    if (c.years_then === 1) {
+      out.push(c.year + ' is the first year in the record, so there is no earlier year to compare it with.');
+    } else if (c.rank_then === 1) {
+      out.push('When it ended, ' + c.year + ' was the <strong>warmest year on record</strong>' + tie +
+               ', beating ' + earlier + '.');
+    } else if (c.rank_then === c.years_then) {
+      out.push('When it ended, ' + c.year + ' was the <strong>coldest year on record</strong>' + tie +
+               ', cooler than ' + earlier + '.');
+    } else {
+      out.push('When it ended, ' + c.year + ' was the <strong>' + ord(c.rank_then) + '-warmest year on record</strong>' + tie +
+               ', of the ' + c.years_then + ' years from ' + first + ' to ' + c.year + '.');
+    }
+    // 2) What has happened since.
+    var n = c.later_years, w = c.later_warmer, span = c.year + ' to ' + last;
+    if (n === 0) {
+      out.push('It is the most recent complete year, so there are no later years to compare yet.');
+    } else if (w === 0) {
+      out.push(n === 1 ? 'The year since has not been warmer.'
+                       : 'None of the ' + n + ' years since has been warmer.');
+    } else if (w === n) {
+      out.push((n === 1 ? 'The year since has been warmer' : 'Every one of the ' + n + ' years since has been warmer') +
+               ', making ' + c.year + ' the <strong>coldest year from ' + span + '</strong>.');
+    } else {
+      out.push(w + ' of the ' + years(n) + ' since ' + (w === 1 ? 'has' : 'have') + ' been warmer, making ' + c.year +
+               ' the <strong>' + ord(c.later_colder + 1) + '-coldest</strong> of the ' + (n + 1) + ' years from ' + span + '.');
+    }
+    // 3) Where it stands today.
+    if (n > 0) {
+      if (c.rank_now === 1) {
+        out.push('It remains the <strong>warmest year on record</strong>.');
+      } else if (c.rank_now === c.years_now) {
+        out.push('Today it is the coldest of all ' + c.years_now + ' complete years on record.');
+      } else {
+        out.push('Today it ranks ' + ord(c.rank_now) + '-warmest of all ' + c.years_now + ' complete years on record.');
+      }
+    }
+    return out;
+  }
+
+  var select = document.getElementById('year-select'), result = document.getElementById('year-result');
+  var byYear = {};
+  D.context.forEach(function (c) { byYear[c.year] = c; });
+  D.annual.years.slice().reverse().forEach(function (y) {
+    var o = document.createElement('option'); o.value = y; o.textContent = y; select.appendChild(o);
+  });
+  function selectYear(y) {
+    var c = byYear[y];
+    if (!c) { return; }
+    selectedYear = y;
+    select.value = String(y);
+    result.innerHTML = '<div class="lookup-value">' + signed(c.value) + '<span>above 1850\u20131900</span></div>' +
+      '<ul>' + describe(c).map(function (t) { return '<li>' + t + '</li>'; }).join('') + '</ul>';
+    annualChart.data.datasets[0].backgroundColor = barColors();
+    annualChart.update('none');
+  }
+  select.addEventListener('change', function () { selectYear(Number(select.value)); });
+  selectYear(last);
 })();
 </script>
 </body>

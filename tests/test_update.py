@@ -169,6 +169,43 @@ class AnnualTest(unittest.TestCase):
                          ["2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "103rd"])
 
 
+class YearContextTest(unittest.TestCase):
+    """Hand-checkable example: values by year 2000-2005."""
+    def setUp(self):
+        vals = {2000: 0.50, 2001: 0.70, 2002: 0.60, 2003: 0.80, 2004: 0.40, 2005: 0.70}
+        self.ctx = {c["year"]: c for c in update.year_context(
+            [{"year": y, "pi": v} for y, v in vals.items()])}
+
+    def test_first_year(self):
+        c = self.ctx[2000]
+        self.assertEqual((c["rank_then"], c["years_then"]), (1, 1))
+        self.assertEqual((c["later_years"], c["later_warmer"], c["later_colder"]), (5, 4, 1))
+        self.assertEqual(c["rank_now"], 5)
+
+    def test_record_at_the_time(self):
+        self.assertEqual(self.ctx[2001]["rank_then"], 1)   # 0.70 beats 0.50
+        self.assertEqual(self.ctx[2003]["rank_then"], 1)   # 0.80 beats all before
+        self.assertEqual(self.ctx[2003]["later_warmer"], 0)
+        self.assertEqual(self.ctx[2003]["rank_now"], 1)
+
+    def test_middle_rank_at_the_time(self):
+        c = self.ctx[2002]                                   # 0.60 vs 0.50, 0.70
+        self.assertEqual((c["rank_then"], c["years_then"]), (2, 3))
+        self.assertEqual((c["later_years"], c["later_warmer"], c["later_colder"]), (3, 2, 1))
+
+    def test_coldest_at_the_time(self):
+        c = self.ctx[2004]                                   # 0.40 is the lowest so far
+        self.assertEqual((c["rank_then"], c["years_then"]), (5, 5))
+        self.assertEqual((c["later_warmer"], c["later_colder"]), (1, 0))
+
+    def test_ties(self):
+        c = self.ctx[2005]                                   # 0.70 equals 2001
+        self.assertTrue(c["tied_then"])
+        self.assertEqual(c["rank_then"], 2)                  # only 2003 is strictly warmer
+        self.assertEqual(c["later_years"], 0)
+        self.assertEqual(self.ctx[2001]["later_warmer"], 1)  # 2005's tie does not count as warmer
+
+
 class ValidationTest(unittest.TestCase):
     def setUp(self):
         self.ano = lambda d: 0.5

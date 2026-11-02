@@ -16,6 +16,14 @@ It shows five running means, each ending on the latest available day:
 
 It also shows the **annual average of every complete calendar year from 1940** (the start of the ERA5 record) with the warmest five years ranked. A year appears once all its days are in the data, normally in the first days of January.
 
+A **year lookup** below the annual chart lets readers pick any complete year (from the menu or by clicking its bar) and see:
+
+- how it ranked when it ended (for example, the warmest year on record at the time, or the 3rd warmest);
+- how many later years have been warmer, and where it ranks among the years from then to now;
+- where it ranks among all complete years today.
+
+"On record" means the ERA5 record, which starts in 1940. Years are compared at the 0.001 °C precision shown on the page; equal values count as ties, not as warmer. The rankings are calculated in `update.py` (`year_context`) and tested; the page only turns them into sentences.
+
 Each is also compared with the same window one year earlier.
 
 ## How It Works
