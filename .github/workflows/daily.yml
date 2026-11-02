@@ -1,0 +1,64 @@
+name: Daily update
+
+on:
+  schedule:
+    # 12:17 UTC daily (06:17 in Edmonton). Off the hour to avoid GitHub's busiest minute.
+    - cron: "17 12 * * *"
+  workflow_dispatch: {}   # adds a "Run workflow" button in the Actions tab
+  push:
+    branches: [main]
+    paths: ["update.py", "offsets.csv", ".github/workflows/daily.yml"]
+
+permissions:
+  contents: write   # commit data/latest.json
+  pages: write      # publish the dashboard
+  id-token: write   # required by deploy-pages
+
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Run tests
+        run: python -m unittest discover -s tests
+
+      - name: Download data and build dashboard
+        run: python update.py
+
+      - name: Commit latest values
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898294+github-actions[bot]@users.noreply.github.com"
+          git add data/latest.json
+          if git diff --cached --quiet; then
+            echo "No change in latest values"
+          else
+            git commit -m "Daily update: data to $(python -c "import json;print(json.load(open('data/latest.json'))['latest_date'])")"
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
