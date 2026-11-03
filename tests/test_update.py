@@ -3,6 +3,8 @@ import csv
 import datetime as dt
 import json
 import math
+import random
+import calendar
 import sys
 import tempfile
 import unittest
@@ -376,6 +378,188 @@ class PageSectionsTest(unittest.TestCase):
             self.assertEqual(len(res["trend"]["linear"]), len(res["trend"]["dates"]))
             latest = json.loads((Path(tmp) / "latest.json").read_text())
             self.assertIn("trend_since_1991", latest)
+
+
+def forecast_rows(fn, start=dt.date(1985, 1, 1), end=dt.date(2026, 11, 1)):
+    """Rows with ano/pi/offset like update.build produces, for an anomaly function fn(date)."""
+    update.OFFSETS.clear()
+    update.OFFSETS.update(update.load_offsets())
+    rows, d = [], start
+    while d <= end:
+        a = fn(d)
+        off = update.OFFSETS[d.strftime("%m-%d")]
+        rows.append({"date": d, "ano": a, "offset": off, "pi": a + off})
+        d += dt.timedelta(days=1)
+    return rows
+
+
+class ForecastTest(unittest.TestCase):
+    def test_noise_free_trend_is_forecast_exactly(self):
+        t0 = update.decimal_year(dt.date(1991, 1, 1))
+        fn = lambda d: 0.1 + 0.02 * (update.decimal_year(d) - t0)
+        rows = forecast_rows(fn)
+        fc = update.forecast_year(rows)
+        truth = sum(fn(d) + update.OFFSETS[d.strftime("%m-%d")]
+                    for d in (dt.date(2026, 1, 1) + dt.timedelta(days=i) for i in range(365))) / 365
+        self.assertAlmostEqual(fc["annual_median"], truth, places=6)
+        self.assertAlmostEqual(fc["annual_high"] - fc["annual_low"], 0, places=6)
+        self.assertEqual(fc["days_left"], 60)
+
+    def test_uses_no_data_after_the_cut(self):
+        random.seed(5)
+        noise = {}
+        fn = lambda d: noise.setdefault(d, random.gauss(0, 0.1)) + 0.02 * (d.year - 2000)
+        rows = forecast_rows(fn, end=dt.date(2026, 10, 1))
+        cut = next(i for i, r in enumerate(rows) if r["date"] == dt.date(2015, 6, 30))
+        a = update.forecast_year(rows, cut_index=cut)
+        for r in rows[cut + 1:]:
+            r["ano"] += 5.0
+            r["pi"] += 5.0
+        b = update.forecast_year(rows, cut_index=cut)
+        self.assertEqual(a["annual"], b["annual"])
+        self.assertEqual(a["days"], b["days"])
+
+    def test_complete_year_returns_none(self):
+        rows = forecast_rows(lambda d: 0.5, end=dt.date(2025, 12, 31))
+        self.assertIsNone(update.forecast_year(rows))
+
+    def test_range_covers_truth_on_noisy_data(self):
+        # AR(1) daily noise on a trend: the 90% range should contain the true outcome in most years.
+        random.seed(11)
+        series, e, d = {}, 0.0, dt.date(1985, 1, 1)
+        while d <= dt.date(2026, 10, 1):
+            e = 0.97 * e + random.gauss(0, 0.03)
+            series[d] = 0.02 * (d.year - 2000) + e
+            d += dt.timedelta(days=1)
+        rows = forecast_rows(lambda d: series[d], end=dt.date(2026, 10, 1))
+        idx = {r["date"]: i for i, r in enumerate(rows)}
+        hits = total = 0
+        for y in range(2008, 2026):
+            fc = update.forecast_year(rows, cut_index=idx[dt.date(y, 6, 30)])
+            truth = sum(r["pi"] for r in rows if r["date"].year == y) / (366 if calendar.isleap(y) else 365)
+            hits += fc["annual_low"] <= truth <= fc["annual_high"]
+            total += 1
+        self.assertGreaterEqual(hits / total, 0.7)
+
+    def test_days_include_observed(self):
+        rows = forecast_rows(lambda d: 0.7 if d.year < 2026 else (0.8 if d.month < 6 else 0.5))
+        fc = update.forecast_year(rows)
+        observed = sum(r["pi"] > 1.5 for r in rows if r["date"].year == 2026)
+        self.assertEqual(fc["days_observed"], observed)
+        self.assertGreaterEqual(fc["days_low"], observed)
+
+    def test_rank_odds_normal(self):
+        # Centre 1.55, 90% range 1.50-1.60 -> sd = 0.05 / 1.645
+        fc = {"annual_median": 1.55, "annual_low": 1.50, "annual_high": 1.60}
+        prev = [{"pi": 1.60}, {"pi": 1.50}, {"pi": 1.30}]
+        odds = update.rank_odds(fc, prev)
+        sd = 0.05 / update.Z90
+        p_record = 1 - update.normal_cdf((1.60 - 1.55) / sd)
+        self.assertAlmostEqual(odds["rank_share"][1], p_record, places=6)      # = 5%
+        self.assertAlmostEqual(odds["rank_share"][1], 0.05, places=3)
+        self.assertAlmostEqual(odds["rank_share"][2], 0.90, places=3)
+        self.assertAlmostEqual(sum(odds["rank_share"].values()), 1.0, places=3)
+        self.assertAlmostEqual(odds["above_threshold"], 0.95, places=3)
+
+    def test_wording(self):
+        self.assertEqual(update.fmt_chance(0.02), "less than 5%")
+        self.assertEqual(update.fmt_chance(0.97), "more than 95%")
+        self.assertEqual(update.fmt_chance(0.62), "about 60%")
+
+
+def oni_text_from(values: dict) -> str:
+    """NOAA-format ONI text from {(season, year): anomaly}."""
+    lines = ["SEAS  YR   TOTAL   ANOM"]
+    for (season, year), v in values.items():
+        lines.append(f"  {season} {year}  27.00  {v:5.2f}")
+    return "\n".join(lines) + "\n"
+
+
+def synthetic_oni(first=1985, last_abs=None, seed=7):
+    """Monthly ONI-like series keyed by absolute end month, AR(1) with ~4-year cycles."""
+    random.seed(seed)
+    out, v = {}, 0.0
+    for abs_m in range(first * 12 + 2, (last_abs or 2026 * 12 + 9) + 1):
+        v = 0.92 * v + random.gauss(0, 0.35)
+        out[abs_m] = max(-2.5, min(2.5, v))
+    return out
+
+
+def season_of(end_abs: int) -> tuple:
+    """(season code, year) for the ONI season ending in absolute month end_abs (inverse of parse_oni)."""
+    end_year, end_month = (end_abs - 1) // 12, (end_abs - 1) % 12 + 1
+    if end_month == 1:
+        return "NDJ", end_year - 1
+    return update.ONI_SEASONS[end_month - 2], end_year
+
+
+class OniTest(unittest.TestCase):
+    def test_parse_and_lag_rule(self):
+        text = oni_text_from({("NDJ", 2025): -0.6, ("DJF", 2026): -0.5, ("JAS", 2026): 2.16})
+        oni = update.parse_oni(text)
+        self.assertEqual(oni[2026 * 12 + 1], -0.6)          # NDJ 2025 ends in January 2026
+        self.assertEqual(oni[2026 * 12 + 2], -0.5)          # DJF 2026 ends in February
+        self.assertEqual(oni[2026 * 12 + 9], 2.16)          # JAS 2026 ends in September
+        self.assertEqual(update.oni_known_on(dt.date(2026, 11, 3), oni), 2.16)   # Nov -> season ending Sep
+        self.assertEqual(update.oni_known_on(dt.date(2026, 3, 15), oni), -0.6)   # Mar -> season ending Jan
+        self.assertIsNone(update.oni_known_on(dt.date(2026, 10, 3), oni))        # Aug season missing
+        self.assertEqual(update.oni_season_label(dt.date(2026, 11, 3)), "Jul\u2013Sep 2026")
+        self.assertEqual(update.oni_season_label(dt.date(2026, 3, 15)), "Nov 2025\u2013Jan 2026")
+
+    def test_season_round_trip(self):
+        for m in range(2020 * 12 + 1, 2023 * 12 + 1):
+            self.assertIn(m, update.parse_oni(oni_text_from({season_of(m): 0.1})))
+
+    def test_bad_or_stale_index_is_ignored(self):
+        self.assertIsNone(update.load_oni_text("not the right file", dt.date(2026, 11, 3)))
+        stale = oni_text_from({("JFM", 2026): 0.1})
+        self.assertIsNone(update.load_oni_text(stale, dt.date(2026, 11, 3)))
+        fresh = oni_text_from({("JAS", 2026): 2.16})
+        self.assertIsNotNone(update.load_oni_text(fresh, dt.date(2026, 11, 3)))
+        self.assertIsNone(update.load_oni_text(None, dt.date(2026, 11, 3)))
+
+    def test_enso_model_helps_when_enso_drives_temperature(self):
+        oni = synthetic_oni()
+        random.seed(3)
+        e, series, d = 0.0, {}, dt.date(1985, 1, 1)
+        while d <= dt.date(2026, 10, 1):
+            e = 0.97 * e + random.gauss(0, 0.025)
+            lagged = oni.get(d.year * 12 + d.month - 3, 0.0)      # temperature follows ENSO ~3 months later
+            series[d] = 0.02 * (d.year - 2000) + 0.12 * lagged + e
+            d += dt.timedelta(days=1)
+        rows = forecast_rows(lambda d: series[d], end=dt.date(2026, 10, 1))
+        idx = {r["date"]: i for i, r in enumerate(rows)}
+        err = {"base": 0.0, "enso": 0.0}
+        for y in range(2008, 2026):
+            truth = sum(r["pi"] for r in rows if r["date"].year == y) / (366 if calendar.isleap(y) else 365)
+            for model, o in (("base", None), ("enso", oni)):
+                fc = update.forecast_year(rows, cut_index=idx[dt.date(y, 4, 15)], oni=o)
+                self.assertEqual(fc["model"], model)
+                err[model] += abs(fc["annual_median"] - truth)
+        self.assertLess(err["enso"], err["base"] * 0.9)
+
+    def test_falls_back_when_current_value_missing(self):
+        oni = synthetic_oni(last_abs=2026 * 12 + 6)                # newest season ends June
+        rows = forecast_rows(lambda d: 0.5 + 0.01 * (d.year - 2000), end=dt.date(2026, 11, 1))
+        fc = update.forecast_year(rows, oni=oni)                   # needs the season ending September
+        self.assertEqual(fc["model"], "base")
+        self.assertEqual(fc["spread"], update.FORECAST_SPREAD)
+
+    def test_page_names_the_index(self):
+        oni = synthetic_oni()
+        text = oni_text_from({season_of(m): v for m, v in oni.items()})
+        with tempfile.TemporaryDirectory() as tmp:
+            ano = lambda d: round(0.02 * (d.year - 2000) + 0.1 * math.sin(d.toordinal() / 30.0) + 0.7, 3)
+            csv_text = synthetic_csv(dt.date(1985, 1, 1), dt.date(2026, 11, 1), ano)
+            res = update.build(csv_text, today=dt.date(2026, 11, 3), site_dir=Path(tmp) / "site",
+                               repo_latest=Path(tmp) / "latest.json", oni_text=text)
+            self.assertEqual(res["forecast"]["model"], "enso")
+            html = (Path(tmp) / "site" / "index.html").read_text()
+            self.assertIn("NOAA&#x27;s El Ni\u00f1o index (Jul\u2013Sep 2026: ", html)
+            self.assertIn('<a href="https://github.com/JMertens31/climate-tracker#how-the-projection-works">see how the projection works</a>.', html)
+            self.assertIn("NOAA Climate Prediction Center", html)
+            latest = json.loads((Path(tmp) / "latest.json").read_text())
+            self.assertEqual(latest["projection"]["model"], "enso")
 
 
 class ValidationTest(unittest.TestCase):

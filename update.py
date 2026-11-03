@@ -36,6 +36,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 SOURCE_URL = "https://sites.ecmwf.int/data/climatepulse/data/series/era5_daily_series_2t_global.csv"
+# NOAA Climate Prediction Center Oceanic Nino Index: 3-month running Nino 3.4 sea surface temperature
+# anomaly, the standard measure of El Nino (positive) and La Nina (negative). Used by the forecast only.
+ONI_URL = "https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii.txt"
+ONI_SEASONS = ["DJF", "JFM", "FMA", "MAM", "AMJ", "MJJ", "JJA", "JAS", "ASO", "SON", "OND", "NDJ"]
+# Full explanation of the year-end projection, linked from the page.
+README_METHOD_URL = "https://github.com/JMertens31/climate-tracker#how-the-projection-works"
+ONI_MAX_AGE_MONTHS = 4         # ignore the index if its newest season ended longer ago than this
 EXPECTED_HEADER = ["date", "2t", "clim_91-20", "ano_91-20", "status"]
 OFFSETS_FILE = ROOT / "offsets.csv"
 SITE_DIR = ROOT / "site"
@@ -53,6 +60,25 @@ TWO_DEGREES = 2.0
 # Each must lie inside the ERA5 record (1940 onward). Its level is the mean of
 # the daily pre-industrial anomalies over the period, computed from the data.
 BASELINES = [("1991\u20132020 average", 1991, 2020)]
+
+# Year-end forecast (see forecast_year)
+FORECAST_POOL_START = 1991     # past years whose paths form the ensemble
+FORECAST_EXCLUDE = {1991, 1992, 1993}   # Mount Pinatubo cooling: not representative of normal variability
+FORECAST_STATE_DAYS = 30       # "current state" = mean departure from trend over the last 30 days
+FORECAST_JITTER = 15           # each past year also contributes paths starting up to 15 days either side
+FORECAST_MIN_MEMBERS = 100     # below this the ensemble is too small to give a range
+# The raw ensemble is too narrow: in a backtest on ERA5 (forecasts made on the 15th of each month,
+# Jan-Nov, for every year 2005-2025; 231 cases) its 90% range held the outcome 83.5% of the time.
+# Widening every member's distance from the median by 1.3 gave 90.0%. Re-check with
+# tools/backtest_forecast.py if the data or the model changes.
+FORECAST_SPREAD = 1.3
+# With the El Nino index as a second predictor, the same backtest gave 90.9% coverage at 1.35,
+# a smaller average error (0.036 vs 0.039 C) and ranges about 16% narrower.
+FORECAST_SPREAD_ENSO = 1.35
+# Odds of each rank come from a normal distribution centred on the ensemble median, with the
+# spread implied by the (widened) 90% range. In the backtest this scored slightly better (Brier
+# 0.315 vs 0.331) than counting ensemble members, and gives steadier small probabilities.
+Z90 = 1.6448536269514722
 
 
 class DataError(Exception):
@@ -112,6 +138,61 @@ def validate(rows: list[dict], today: dt.date) -> None:
         raise DataError(f"Newest value is {rows[-1]['date']}, {age} days old; source may have stopped updating")
 
 
+def parse_oni(text: str) -> dict[int, float]:
+    """Oceanic Nino Index keyed by the absolute month in which each 3-month season ends
+    (year * 12 + month, January = 1). NDJ ends in January of the following year."""
+    lines = [ln.split() for ln in text.splitlines() if ln.strip()]
+    if not lines or lines[0][:4] != ["SEAS", "YR", "TOTAL", "ANOM"]:
+        raise DataError("Unexpected ONI file format")
+    out = {}
+    for parts in lines[1:]:
+        try:
+            season, year, anom = parts[0], int(parts[1]), float(parts[3])
+            i = ONI_SEASONS.index(season)
+        except (ValueError, IndexError) as e:
+            raise DataError(f"Bad ONI row {parts!r}: {e}") from e
+        if not -5 < anom < 5:
+            raise DataError(f"Implausible ONI value {anom} for {season} {year}")
+        out[year * 12 + i + 2] = anom
+    return out
+
+
+def oni_known_on(d: dt.date, oni: dict[int, float] | None) -> float | None:
+    """The ONI value a forecaster could rely on at date d: the season ending two months before
+    d's month (NOAA publishes each season early in the following month). None if missing."""
+    if not oni:
+        return None
+    return oni.get(d.year * 12 + d.month - 2)
+
+
+def oni_season_label(d: dt.date) -> str:
+    """Readable name of the season oni_known_on(d) uses, e.g. 'Jul\u2013Sep 2026'."""
+    end_abs = d.year * 12 + d.month - 2
+    end_year, end_month = (end_abs - 1) // 12, (end_abs - 1) % 12 + 1
+    start_month = (end_month - 3) % 12 + 1
+    mon = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    if start_month > end_month:
+        return f"{mon[start_month]} {end_year - 1}\u2013{mon[end_month]} {end_year}"
+    return f"{mon[start_month]}\u2013{mon[end_month]} {end_year}"
+
+
+def load_oni_text(text: str | None, today: dt.date) -> dict[int, float] | None:
+    """Parse and sanity-check the ONI text; return None (forecast falls back) if unusable."""
+    if not text:
+        print("WARNING: no El Nino index; forecast uses temperature data only", file=sys.stderr)
+        return None
+    try:
+        oni = parse_oni(text)
+    except DataError as e:
+        print(f"WARNING: El Nino index unusable ({e}); forecast uses temperature data only", file=sys.stderr)
+        return None
+    newest = max(oni)
+    if (today.year * 12 + today.month) - newest > ONI_MAX_AGE_MONTHS:
+        print("WARNING: El Nino index is out of date; forecast uses temperature data only", file=sys.stderr)
+        return None
+    return oni
+
+
 def load_offsets(path: Path = OFFSETS_FILE) -> dict[str, float]:
     with path.open() as f:
         offsets = {r["month_day"]: float(r["offset_c"]) for r in csv.DictReader(f)}
@@ -122,7 +203,12 @@ def load_offsets(path: Path = OFFSETS_FILE) -> dict[str, float]:
 
 # --------------------------------------------------------------------------- compute
 
+OFFSETS: dict[str, float] = {}
+
+
 def add_preindustrial(rows: list[dict], offsets: dict[str, float]) -> None:
+    OFFSETS.clear()
+    OFFSETS.update(offsets)
     for r in rows:
         r["offset"] = offsets[r["date"].strftime("%m-%d")]
         r["pi"] = r["ano"] + r["offset"]
@@ -317,6 +403,185 @@ def by_calendar_day(rows: list[dict]) -> dict:
     return {"slots": slots, "years": years, "values": [series[y] for y in years], "base_1991_2020": base}
 
 
+def quantile(sorted_vals: list[float], q: float) -> float:
+    """Linear-interpolation quantile of an already sorted list."""
+    if not sorted_vals:
+        raise ValueError("empty")
+    pos = q * (len(sorted_vals) - 1)
+    lo = int(math.floor(pos))
+    hi = min(lo + 1, len(sorted_vals) - 1)
+    return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (pos - lo)
+
+
+def forecast_year(rows: list[dict], cut_index: int | None = None, threshold: float = PARIS_LEVEL,
+                  trend_start: dt.date = TREND_START, spread: float | None = None,
+                  oni: dict[int, float] | None = None) -> dict | None:
+    """Ensemble forecast of the rest of the calendar year from the data up to rows[cut_index].
+
+    Model, in anomalies relative to 1991-2020 (ano):
+      1. A straight-line trend through the daily anomalies from `trend_start` to the cut date.
+      2. The current state s = mean departure from that trend over the last 30 days, and (when the
+         El Nino index is available) e = the ONI value known on that date.
+      3. From every past year (1991 onward, Pinatubo years excluded) take its actual path of
+         departures for the same stretch of calendar (and starting up to 15 days either side).
+         For lead h, c(h) is how much of the starting departure typically remains h days later and
+         g(h) how much each unit of ONI adds (least squares across all those paths); each path's
+         residual is what c(h) and g(h) did not explain.
+      4. Each ensemble member = trend + c(h)*s_now + g(h)*e_now + that path's residual, plus the
+         stored pre-industrial offset for the day.
+      5. Every member's distance from the ensemble median is multiplied by `spread` (calibrated
+         by backtest) for the annual means, the day counts and the daily band.
+    Only years before the forecast year are used, so a backtest of a past year never sees its future.
+    Returns None when the year is already complete or the ensemble is too small.
+    """
+    L = len(rows) - 1 if cut_index is None else cut_index
+    cut = rows[L]["date"]
+    year = cut.year
+    H = (dt.date(year, 12, 31) - cut).days
+    if H <= 0:
+        return None
+
+    i0 = next(i for i, r in enumerate(rows) if r["date"] >= trend_start)
+    ts = [decimal_year(r["date"]) for r in rows[i0:L + 1]]
+    ys = [r["ano"] for r in rows[i0:L + 1]]
+    n = len(ts)
+    mt, my = sum(ts) / n, sum(ys) / n
+    b = sum((t - mt) * (y - my) for t, y in zip(ts, ys)) / sum((t - mt) ** 2 for t in ts)
+    a = my - b * mt
+
+    def trend(d: dt.date) -> float:
+        return a + b * decimal_year(d)
+
+    dep = [None] * len(rows)
+    for i in range(max(0, i0 - FORECAST_STATE_DAYS), len(rows)):
+        dep[i] = rows[i]["ano"] - trend(rows[i]["date"])
+    k = FORECAST_STATE_DAYS
+
+    def state(i: int) -> float:
+        return sum(dep[i - k + 1:i + 1]) / k
+
+    e_now = oni_known_on(cut, oni)
+    use_enso = e_now is not None
+    if spread is None:
+        spread = FORECAST_SPREAD_ENSO if use_enso else FORECAST_SPREAD
+
+    def predictors(i: int) -> list[float] | None:
+        if not use_enso:
+            return [state(i)]
+        e = oni_known_on(rows[i]["date"], oni)
+        return None if e is None else [state(i), e]
+
+    x_now = predictors(L)
+    index = {r["date"]: i for i, r in enumerate(rows)}
+    members = []
+    for y in range(FORECAST_POOL_START, year):
+        if y in FORECAST_EXCLUDE:
+            continue
+        try:
+            anchor = dt.date(y, cut.month, cut.day)
+        except ValueError:                      # 29 Feb cut in a non-leap year
+            anchor = dt.date(y, 2, 28)
+        if anchor not in index:
+            continue
+        j0 = index[anchor]
+        for delta in range(-FORECAST_JITTER, FORECAST_JITTER + 1):
+            j = j0 + delta
+            if j - k + 1 < i0 or j + H > L:
+                continue
+            end_year = rows[j + H]["date"].year
+            if end_year >= year or rows[j]["date"].year in FORECAST_EXCLUDE or end_year in FORECAST_EXCLUDE:
+                continue
+            x = predictors(j)
+            if x is not None:
+                members.append((x, dep[j + 1:j + H + 1]))
+    if len(members) < FORECAST_MIN_MEMBERS:
+        return None
+
+    # Least squares with no intercept, one coefficient vector per lead day (1 or 2 predictors).
+    P = len(x_now)
+    xtx = [[sum(m[0][r] * m[0][c_] for m in members) for c_ in range(P)] for r in range(P)]
+    coef = []
+    for h in range(H):
+        xty = [sum(m[0][r] * m[1][h] for m in members) for r in range(P)]
+        if P == 1:
+            coef.append([xty[0] / xtx[0][0] if xtx[0][0] > 0 else 0.0])
+        else:
+            det = xtx[0][0] * xtx[1][1] - xtx[0][1] * xtx[1][0]
+            coef.append([(xty[0] * xtx[1][1] - xty[1] * xtx[0][1]) / det,
+                         (xtx[0][0] * xty[1] - xtx[1][0] * xty[0]) / det])
+
+    def fitted(h: int, x: list[float]) -> float:
+        return sum(coef[h][r] * x[r] for r in range(P))
+
+    dates = [cut + dt.timedelta(days=h + 1) for h in range(H)]
+    offsets = [OFFSETS[d.strftime("%m-%d")] for d in dates]
+    base = [trend(d) + fitted(h, x_now) + offsets[h] for h, d in enumerate(dates)]
+
+    ytd = [r["pi"] for r in rows if r["date"].year == year and r["date"] <= cut]
+    ytd_sum = sum(ytd)
+    ytd_above = sum(v > threshold for v in ytd)
+    n_days = 366 if calendar.isleap(year) else 365
+
+    annual, days, paths = [], [], []
+    for x_m, D in members:
+        pis = [base[h] + D[h] - fitted(h, x_m) for h in range(H)]
+        paths.append(pis)
+        annual.append((ytd_sum + sum(pis)) / n_days)
+        days.append(ytd_above + sum(v > threshold for v in pis))
+    def widen(vals: list[float], lo: float | None = None, hi: float | None = None) -> list[float]:
+        mid = quantile(sorted(vals), 0.5)
+        out = [mid + spread * (v - mid) for v in vals]
+        if lo is not None:
+            out = [min(hi, max(lo, v)) for v in out]
+        return sorted(out)
+
+    annual_sorted = widen(annual)
+    days_sorted = widen(days, lo=ytd_above, hi=ytd_above + H)
+    band = []
+    for h in range(H):
+        col = widen([p[h] for p in paths])
+        band.append((quantile(col, 0.05), quantile(col, 0.5), quantile(col, 0.95)))
+
+    return {
+        "year": year, "cut": cut.isoformat(), "days_left": H, "days_in_year": n_days,
+        "members": len(members), "years_in_pool": len({m for m in range(FORECAST_POOL_START, year)
+                                                       if m not in FORECAST_EXCLUDE}),
+        "trend_per_decade": b * 10, "state_now": x_now[0],
+        "model": "enso" if use_enso else "base", "oni_now": e_now,
+        "oni_season": oni_season_label(cut) if use_enso else None, "spread": spread,
+        "annual": annual_sorted,
+        "annual_median": quantile(annual_sorted, 0.5),
+        "annual_low": quantile(annual_sorted, 0.05), "annual_high": quantile(annual_sorted, 0.95),
+        "days_observed": ytd_above, "days": days_sorted,
+        "days_median": quantile(days_sorted, 0.5),
+        "days_low": quantile(days_sorted, 0.05), "days_high": quantile(days_sorted, 0.95),
+        "dates": [d.isoformat() for d in dates],
+        "band_low": [x[0] for x in band], "band_mid": [x[1] for x in band], "band_high": [x[2] for x in band],
+    }
+
+
+def normal_cdf(z: float) -> float:
+    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
+
+
+def rank_odds(forecast: dict, previous: list[dict], threshold: float = PARIS_LEVEL) -> dict:
+    """Chance of finishing 1st, 2nd, 3rd... among all complete years, and above `threshold`.
+
+    Uses a normal distribution with the ensemble median as its centre and the standard deviation
+    implied by the 90% range, so small chances are not limited to a handful of past years."""
+    prior = sorted((round(a["pi"], 3) for a in previous), reverse=True)
+    mu = forecast["annual_median"]
+    sd = max((forecast["annual_high"] - forecast["annual_low"]) / (2 * Z90), 1e-6)
+    cdf = lambda v: normal_cdf((v - mu) / sd)
+    edges = [math.inf] + prior + [-math.inf]          # rank r lies between edges[r-1] and edges[r]
+    shares = {}
+    for r in range(1, len(edges)):
+        p = (1.0 if edges[r - 1] == math.inf else cdf(edges[r - 1])) - (0.0 if edges[r] == -math.inf else cdf(edges[r]))
+        if p > 0.0005:
+            shares[r] = p
+    return {"rank_share": shares, "above_threshold": 1 - cdf(threshold), "years_compared": len(prior) + 1}
+
+
 def baseline_levels(rows: list[dict]) -> list[dict]:
     """Level of each reference period on the 1850-1900 scale (degC)."""
     out = []
@@ -330,7 +595,7 @@ def baseline_levels(rows: list[dict]) -> list[dict]:
     return out
 
 
-def compute(rows: list[dict]) -> dict:
+def compute(rows: list[dict], oni: dict[int, float] | None = None) -> dict:
     pis = [r["pi"] for r in rows]
     means = {n: rolling_means(pis, n) for n in WINDOWS}
     for n in WINDOWS:
@@ -390,6 +655,8 @@ def compute(rows: list[dict]) -> dict:
         "fits": fits,
         "days_above": days_above(rows),
         "calendar": by_calendar_day(rows),
+        "forecast": (fc := forecast_year(rows, oni=oni)),
+        "forecast_odds": rank_odds(fc, [a for a in annual if a["year"] < fc["year"]]) if fc else None,
         "daily": {
             "dates": [r["date"].isoformat() for r in daily],
             "values": [round(r["pi"], 3) for r in daily],
@@ -480,6 +747,18 @@ def latest_json(result: dict) -> dict:
                  "reaches_1_5": result["fits"]["exponential"]["reaches_threshold"]},
         },
         "days_above_1_5_this_year": (result["days_above"]["counts"] or [None])[-1],
+        "projection": None if not result["forecast"] else {
+            "year": result["forecast"]["year"],
+            "annual_median": round(result["forecast"]["annual_median"], 3),
+            "annual_90pct": [round(result["forecast"]["annual_low"], 3), round(result["forecast"]["annual_high"], 3)],
+            "days_above_1_5_median": result["forecast"]["days_median"],
+            "days_above_1_5_90pct": [result["forecast"]["days_low"], result["forecast"]["days_high"]],
+            "rank_share": {str(k): round(v, 3) for k, v in result["forecast_odds"]["rank_share"].items()},
+            "chance_above_1_5": round(result["forecast_odds"]["above_threshold"], 3),
+            "model": result["forecast"]["model"],
+            "oni_used": None if result["forecast"]["model"] != "enso" else
+                {"season": result["forecast"]["oni_season"], "value": result["forecast"]["oni_now"]},
+        },
         "source": SOURCE_URL,
     }
 
@@ -503,6 +782,53 @@ def trend_text(fits: dict, latest_iso: str) -> str:
                 f"{exp_['per_decade_now']:.2f} \u00b0C per decade")
         out += crossing_text(exp_["reaches_threshold"], ", and")
     return out
+
+
+def fmt_chance(p: float) -> str:
+    """Odds rounded to 5%, clamped: the ensemble rests on ~30 independent past years,
+    so it cannot resolve chances much below 5% or above 95%."""
+    if p < 0.05:
+        return "less than 5%"
+    if p > 0.95:
+        return "more than 95%"
+    return f"about {int(round(p * 20)) * 5}%"
+
+
+def forecast_text(fc: dict | None, odds: dict | None) -> str:
+    if not fc:
+        return ""
+    y = fc["year"]
+    out = (f"Projection: {y} is on track to finish at {fmt_signed(fc['annual_median'])} \u00b0C "
+           f"(90% range {fmt_signed(fc['annual_low'])} to {fmt_signed(fc['annual_high'])} \u00b0C). ")
+    shares = odds["rank_share"]
+    best = max(shares, key=lambda r: shares[r])
+    place = "the warmest year on record" if best == 1 else f"the {ordinal(best)}-warmest year on record"
+    out += f"That would most likely make it {place} ({fmt_chance(shares[best])} chance)"
+    if best != 1:
+        out += f"; the chance of a new record is {fmt_chance(shares.get(1, 0.0))}"
+    out += (f". The chance its average ends above 1.5 \u00b0C is {fmt_chance(odds['above_threshold'])}.")
+    return out
+
+
+def forecast_days_text(fc: dict | None) -> str:
+    if not fc:
+        return ""
+    return (f"By 31 December it is projected to reach about {round(fc['days_median'])} "
+            f"(90% range {round(fc['days_low'])}\u2013{round(fc['days_high'])}).")
+
+
+def forecast_method_text(fc: dict | None) -> str:
+    """Short note under the annual chart; the full explanation is in the README (README_METHOD_URL)."""
+    if not fc:
+        return ""
+    if fc["model"] == "enso":
+        inputs = f"past years, the warming trend and NOAA's El Ni\u00f1o index ({fc['oni_season']}: {fc['oni_now']:+.2f})"
+    else:
+        inputs = ("past years and the warming trend (the El Ni\u00f1o index was unavailable for this update, "
+                  "so the range is wider)")
+    return (f"This projection comes from about 1,000 simulations built on {inputs}, and its 90% range is "
+            f"calibrated against 2005\u20132025. Early-year projections are less certain because the El Ni\u00f1o "
+            f"index lags by several months; ")
 
 
 def days_above_text(above: dict, latest_iso: str) -> str:
@@ -554,10 +880,18 @@ def render_html(result: dict) -> str:
         for a in ranked[:WARMEST_LIST])
     trend_sentence = trend_text(result["fits"], result["latest_date"])
     above_sentence = days_above_text(result["days_above"], result["latest_date"])
+    fc = result["forecast"]
+    fc_data = None if not fc else {
+        "year": fc["year"], "median": round(fc["annual_median"], 3), "low": round(fc["annual_low"], 3),
+        "high": round(fc["annual_high"], 3), "days_median": fc["days_median"], "days_low": fc["days_low"],
+        "days_high": fc["days_high"], "days_observed": fc["days_observed"], "dates": fc["dates"],
+        "band_low": [round(v, 3) for v in fc["band_low"]], "band_mid": [round(v, 3) for v in fc["band_mid"]],
+        "band_high": [round(v, 3) for v in fc["band_high"]]}
     cal = result["calendar"]
     current_year = dt.date.fromisoformat(result["latest_date"]).year
     data_json = json.dumps({"trend": result["trend"], "daily": result["daily"], "annual": result["annual"],
                             "above": result["days_above"], "calendar": cal, "current_year": current_year,
+                            "forecast": fc_data,
                             "record_year": warmest["year"], "context": result["year_context"],
                             "now": now, "paris": PARIS_LEVEL, "two": TWO_DEGREES,
                             "baselines": [{"label": b["label"], "value": round(b["value"], 3)}
@@ -585,6 +919,11 @@ def render_html(result: dict) -> str:
             .replace("{{ANNUAL_FIRST}}", str(annual[0]["year"]))
             .replace("{{ANNUAL_LAST}}", str(last_year["year"]))
             .replace("{{ANNUAL_SENTENCE}}", html.escape(sentence))
+            .replace("{{FORECAST_SENTENCE}}", f'<p class="forecast">{html.escape(forecast_text(fc, result["forecast_odds"]))}</p>' if fc else "")
+            .replace("{{FORECAST_DAYS_SENTENCE}}", html.escape(forecast_days_text(fc)))
+            .replace("{{FORECAST_METHOD}}", f'<p class="small">{html.escape(forecast_method_text(fc))}'
+                                             f'<a href="{README_METHOD_URL}">see how the projection works</a>.</p>' if fc else "")
+            .replace("{{CAL_FORECAST_NOTE}}", " The shaded band continues it to 31 December: the middle 90% of projected paths, with the dashed line as the median." if fc else "")
             .replace("{{WARMEST_N}}", str(min(WARMEST_LIST, len(ranked))))
             .replace("{{WARMEST_ROWS}}", table_rows)
             .replace("{{DATA}}", data_json))
@@ -614,6 +953,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   .lead { margin: 0 0 24px; max-width: 760px; }
   .meta { font-size: 13px; }
   .small { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+  .forecast { background: var(--tint); border-left: 0; border-radius: 12px; padding: 12px 16px; font-weight: 500; }
   .card { margin: 0 0 40px; }
   .card p { margin: 0 0 12px; font-size: 13.5px; }
   .chart-box { position: relative; height: 360px; }
@@ -674,14 +1014,16 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   <section class="card">
     <h2>{{CURRENT_YEAR}} Against Every Year Since {{CAL_FIRST}}</h2>
-    <p>Each grey line is one year from {{CAL_FIRST}} to {{CAL_PREV}}, darker for more recent years. {{RECORD_YEAR}}, the warmest complete year, is in blue and {{CURRENT_YEAR}} so far in black. The grey dashed curve is the 1991&ndash;2020 average for each date, which rises and falls with the seasons. Hover to compare a date.</p>
+    <p>Each grey line is one year from {{CAL_FIRST}} to {{CAL_PREV}}, darker for more recent years. {{RECORD_YEAR}}, the warmest complete year, is in blue and {{CURRENT_YEAR}} so far in black.{{CAL_FORECAST_NOTE}} The grey dashed curve is the 1991&ndash;2020 average for each date, which rises and falls with the seasons. Hover to compare a date.</p>
     <div class="chart-box tall"><canvas id="calendar" role="img" aria-label="Daily temperature anomaly by calendar day for every year since {{CAL_FIRST}}"></canvas></div>
   </section>
 
   <section class="card">
     <h2>Annual Averages, {{ANNUAL_FIRST}}&ndash;{{ANNUAL_LAST}}</h2>
     <p>{{ANNUAL_SENTENCE}} Each bar is a complete calendar year; the warmest is in blue and the year selected below in orange. ERA5 values before about 1950 rest on fewer observations and are less certain. <a href="data/annual.csv">Download annual values (CSV)</a>.</p>
+    {{FORECAST_SENTENCE}}
     <div class="chart-box"><canvas id="annual" role="img" aria-label="Annual mean temperature anomalies {{ANNUAL_FIRST}} to {{ANNUAL_LAST}}"></canvas></div>
+    {{FORECAST_METHOD}}
 
     <div class="lookup">
       <h3>How Does a Year Compare?</h3>
@@ -701,7 +1043,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   <section class="card">
     <h2>Days Above 1.5 &deg;C Each Year</h2>
-    <p>{{ABOVE_SENTENCE}} Each bar counts the days in that year whose global mean was more than 1.5 &deg;C above 1850&ndash;1900, from {{ABOVE_FIRST}}, the first year with one. The current year, still in progress, is in blue.</p>
+    <p>{{ABOVE_SENTENCE}} {{FORECAST_DAYS_SENTENCE}} Each bar counts the days in that year whose global mean was more than 1.5 &deg;C above 1850&ndash;1900, from {{ABOVE_FIRST}}, the first year with one. For the current year, dark blue is days so far, light blue the projected remainder, and the whisker the 90% range.</p>
     <div class="chart-box short"><canvas id="above" role="img" aria-label="Number of days above 1.5 degrees per year"></canvas></div>
   </section>
 
@@ -710,6 +1052,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   <footer>
     <p><strong>Method.</strong> ERA5 daily global mean 2 m air temperature anomalies relative to 1991&ndash;2020, from <a href="https://pulse.climate.copernicus.eu/">Copernicus Climate Pulse</a> (<a href="{{SOURCE_URL}}">data file</a>). Converted to the 1850&ndash;1900 baseline with the C3S daily offset (0.79&ndash;0.97 &deg;C by day of year; <a href="https://climate.copernicus.eu/climate-bulletin-about-data-and-analysis">C3S method</a>). Pre-industrial values carry about &plusmn;0.1 &deg;C uncertainty from the offset. <a href="data/series.csv">Download the full daily series (CSV)</a>.</p>
     <p>Data: ERA5 daily global surface air temperature via Copernicus Climate Pulse (C3S/ECMWF). Contains modified Copernicus Climate Change Service information {{YEAR}}. Neither the European Commission nor ECMWF is responsible for any use that may be made of the Copernicus information or data it contains.</p>
+    <p>El Ni&ntilde;o index used in the year-end projection: Oceanic Ni&ntilde;o Index, <a href="https://www.cpc.ncep.noaa.gov/products/analysis_monitoring/ensostuff/ONI_v5.php">NOAA Climate Prediction Center</a>.</p>
   </footer>
 </div>
 
@@ -764,6 +1107,23 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
   });
   var refPad = { right: 78 };
+
+  // Vertical uncertainty whiskers: options.plugins.whiskers = [{ index, low, high }] on a category axis.
+  Chart.register({
+    id: 'whiskers',
+    afterDatasetsDraw: function (chart, args, opts) {
+      var x = chart.scales.x, y = chart.scales.y, ctx = chart.ctx;
+      (opts.items || []).forEach(function (w) {
+        var px = x.getPixelForValue(w.index), y0 = y.getPixelForValue(w.low), y1 = y.getPixelForValue(w.high);
+        var cap = Math.max(4, Math.min(10, (x.width / x.ticks.length) * 0.3));
+        ctx.save(); ctx.strokeStyle = C.ink; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.moveTo(px, y0); ctx.lineTo(px, y1);
+        ctx.moveTo(px - cap, y0); ctx.lineTo(px + cap, y0); ctx.moveTo(px - cap, y1); ctx.lineTo(px + cap, y1);
+        ctx.stroke(); ctx.restore();
+      });
+    }
+  });
+  var FC = D.forecast;
 
   // Running means today: one bar per window, 365-day in blue, value printed above each bar.
   var nowColors = D.now.keys.map(function (k) { return k === '365d' ? C.accent : C.ink; });
@@ -887,27 +1247,42 @@ HTML_TEMPLATE = r"""<!doctype html>
       return y === selectedYear ? C.orange : (y === D.record_year ? C.accent : C.ink);
     });
   }
+  // With a projection, the current year gets its own light bar (median) and a 90% whisker.
+  var annLabels = D.annual.years.slice(), annSets = [
+    { label: 'Annual mean', data: D.annual.values.slice(), borderRadius: 2, borderSkipped: false,
+      categoryPercentage: 0.9, barPercentage: 0.9, grouped: false, backgroundColor: barColors() } ];
+  var annWhiskers = [];
+  if (FC) {
+    annLabels.push(FC.year);
+    annSets.push({ label: 'Projected', data: D.annual.years.map(function () { return null; }).concat([FC.median]),
+                   backgroundColor: C.accent + '55', borderColor: C.accent, borderWidth: 1.5, borderRadius: 2,
+                   borderSkipped: false, categoryPercentage: 0.9, barPercentage: 0.9, grouped: false });
+    annWhiskers.push({ index: annLabels.length - 1, low: FC.low, high: FC.high });
+  }
   var annualChart = new Chart(document.getElementById('annual'), {
     type: 'bar',
-    data: { labels: D.annual.years, datasets: [
-      { label: 'Annual mean', data: D.annual.values, borderRadius: 2, borderSkipped: false, categoryPercentage: 0.9, barPercentage: 0.9,
-        backgroundColor: barColors() } ] },
+    data: { labels: annLabels, datasets: annSets },
     options: {
       maintainAspectRatio: false, animation: false, layout: { padding: refPad },
       onClick: function (evt, els) {
         var bar = els.filter(function (e) { return e.datasetIndex === 0; })[0];
-        if (bar) { selectYear(D.annual.years[bar.index]); }
+        if (bar && bar.index < D.annual.years.length) { selectYear(D.annual.years[bar.index]); }
       },
       onHover: function (evt, els) { evt.native.target.style.cursor = els.length ? 'pointer' : 'default'; },
       plugins: {
         legend: { display: false },
         refLines: { lines: [REF.paris] },
+        whiskers: { items: annWhiskers },
         tooltip: { callbacks: { title: function (it) { return String(it[0].label); },
-                                label: function (it) { return signed(it.parsed.y); } } }
+                                label: function (it) {
+                                  if (it.datasetIndex === 1) {
+                                    return ['Projected ' + signed(FC.median), '90% range ' + signed(FC.low) + ' to ' + signed(FC.high)];
+                                  }
+                                  return signed(it.parsed.y); } } }
       },
       scales: {
         x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 0,
-             callback: function (v, i) { var y = D.annual.years[i]; return y % 10 === 0 ? String(y) : null; } } },
+             callback: function (v, i) { var y = annLabels[i]; return y % 10 === 0 ? String(y) : null; } } },
         y: { beginAtZero: true, grid: { color: C.grid }, ticks: { callback: function (v) { return v.toFixed(1) + '\u00b0'; } },
              title: { display: true, text: '\u00b0C above 1850\u20131900' } }
       }
@@ -930,6 +1305,22 @@ HTML_TEMPLATE = r"""<!doctype html>
   if (cal.base_1991_2020) {
     calSets.push({ label: '1991\u20132020 average', data: cal.base_1991_2020, pointRadius: 0, tension: 0,
                    borderColor: '#374151', borderDash: [6, 4], borderWidth: 2, order: 0, highlight: 'base' });
+  }
+  if (FC) {
+    // Projected rest of the current year: 90% band (filled between low and high) and median.
+    var slotOf = {};
+    cal.slots.forEach(function (md, i) { slotOf[md] = i; });
+    function onSlots(vals) {
+      var out = cal.slots.map(function () { return null; });
+      FC.dates.forEach(function (d, h) { out[slotOf[d.slice(5)]] = vals[h]; });
+      return out;
+    }
+    calSets.push({ label: 'Projection, 5th percentile', data: onSlots(FC.band_low), pointRadius: 0, borderWidth: 0,
+                   borderColor: 'transparent', order: 0, highlight: 'band' });
+    calSets.push({ label: 'Projection, 95th percentile', data: onSlots(FC.band_high), pointRadius: 0, borderWidth: 0,
+                   borderColor: 'transparent', backgroundColor: C.ink + '26', fill: '-1', order: 0, highlight: 'band' });
+    calSets.push({ label: 'Projection, median', data: onSlots(FC.band_mid), pointRadius: 0, borderWidth: 2,
+                   borderDash: [4, 3], borderColor: C.ink, order: 0, highlight: 'band' });
   }
   var monthsAt = {};
   cal.slots.forEach(function (md, i) { if (md.slice(3) === '01') { monthsAt[i] = months[Number(md.slice(0, 2)) - 1]; } });
@@ -960,22 +1351,36 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   // Days above 1.5 C per year: current (incomplete) year in blue.
   if (D.above.years.length) {
+    var aboveSets = [{ label: 'Days above 1.5 \u00b0C', data: D.above.counts, borderRadius: 3, borderSkipped: false,
+                       backgroundColor: D.above.years.map(function (y) { return y === D.current_year ? C.accent : C.ink; }) }];
+    var aboveWhiskers = [];
+    var ci = D.above.years.indexOf(D.current_year);
+    if (FC && ci >= 0) {
+      aboveSets.push({ label: 'Projected remainder', borderRadius: 3, borderSkipped: false,
+                       data: D.above.years.map(function (y, i) { return i === ci ? Math.max(0, FC.days_median - FC.days_observed) : null; }),
+                       backgroundColor: C.accent + '55', borderColor: C.accent, borderWidth: 1.5 });
+      aboveWhiskers.push({ index: ci, low: FC.days_low, high: FC.days_high });
+    }
     new Chart(document.getElementById('above'), {
       type: 'bar',
-      data: { labels: D.above.years, datasets: [
-        { label: 'Days above 1.5 \u00b0C', data: D.above.counts, borderRadius: 3, borderSkipped: false,
-          backgroundColor: D.above.years.map(function (y) { return y === D.current_year ? C.accent : C.ink; }) } ] },
+      data: { labels: D.above.years, datasets: aboveSets },
       options: {
         maintainAspectRatio: false, animation: false,
         plugins: {
           legend: { display: false },
+          whiskers: { items: aboveWhiskers },
           tooltip: { callbacks: {
             title: function (it) { var y = Number(it[0].label); return y === D.current_year ? y + ' (so far)' : String(y); },
-            label: function (it) { return it.parsed.y + (it.parsed.y === 1 ? ' day' : ' days') + ' above 1.5 \u00b0C'; } } }
+            label: function (it) {
+              if (it.datasetIndex === 1) {
+                return ['Projected total ' + Math.round(FC.days_median) + ' days',
+                        '90% range ' + Math.round(FC.days_low) + '\u2013' + Math.round(FC.days_high)];
+              }
+              return it.parsed.y + (it.parsed.y === 1 ? ' day' : ' days') + ' above 1.5 \u00b0C'; } } }
         },
         scales: {
-          x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true } },
-          y: { beginAtZero: true, max: 366, grid: { color: C.grid }, ticks: { stepSize: 60 },
+          x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true } },
+          y: { stacked: true, beginAtZero: true, max: 366, grid: { color: C.grid }, ticks: { stepSize: 60 },
                title: { display: true, text: 'Days' } }
         }
       }
@@ -1061,11 +1466,12 @@ HTML_TEMPLATE = r"""<!doctype html>
 # --------------------------------------------------------------------------- main
 
 def build(text: str, today: dt.date | None = None, site_dir: Path = SITE_DIR,
-          repo_latest: Path = REPO_LATEST) -> dict:
+          repo_latest: Path = REPO_LATEST, oni_text: str | None = None) -> dict:
+    today = today or dt.datetime.now(dt.timezone.utc).date()
     rows = parse_series(text)
-    validate(rows, today or dt.datetime.now(dt.timezone.utc).date())
+    validate(rows, today)
     add_preindustrial(rows, load_offsets())
-    result = compute(rows)
+    result = compute(rows, oni=load_oni_text(oni_text, today))
 
     if site_dir.exists():
         shutil.rmtree(site_dir)
@@ -1083,14 +1489,25 @@ def build(text: str, today: dt.date | None = None, site_dir: Path = SITE_DIR,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--input", type=Path, help="read the CSV from a local file instead of downloading")
+    ap.add_argument("--oni-input", type=Path, help="read the El Nino index from a local file")
     args = ap.parse_args()
+    # The El Nino index only improves the projection: if it cannot be fetched, carry on without it.
+    try:
+        oni_text = args.oni_input.read_text(encoding="utf-8") if args.oni_input else download(ONI_URL)
+    except (DataError, OSError) as e:
+        print(f"WARNING: could not get the El Nino index ({e}); forecast uses temperature data only", file=sys.stderr)
+        oni_text = None
     try:
         text = args.input.read_text(encoding="utf-8") if args.input else download(SOURCE_URL)
-        result = build(text)
+        result = build(text, oni_text=oni_text)
     except DataError as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
     print(f"Latest data {result['latest_date']} ({result['latest_status'].lower()})")
+    if result["forecast"]:
+        f = result["forecast"]
+        print(f"  Projection ({f['model']} model): {f['annual_median']:+.3f} degC "
+              f"[{f['annual_low']:+.3f}, {f['annual_high']:+.3f}]")
     for t in result["tiles"]:
         print(f"  {t['label']:<22} {t['value']:+.3f} degC  ({t['start']} to {t['end']})")
     return 0

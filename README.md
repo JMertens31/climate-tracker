@@ -2,7 +2,7 @@
 
 A daily-updated dashboard of global surface air temperature above the 1850–1900 pre-industrial baseline, built from Copernicus ERA5 data.
 
-**Live dashboard:** (https://jmertens31.github.io/climate-tracker/)
+**Live dashboard:** `https://<owner>.github.io/<repo>/` (replace with your Pages URL)
 
 The top chart shows five running means as bars, each ending on the latest available day, with the 365-day mean in blue and dashed lines at 1.5 °C, 2 °C and the 1991–2020 average:
 
@@ -19,6 +19,39 @@ Other sections:
 - **Running means and long-term trend since 1991:** the 30/90/180/365-day means from 1 January 1991 (the start of the 1991–2020 period), with two trends fitted by least squares to every daily value since then: a straight line, and an exponential curve (y = A·e^(kt)). The page states each trend's current level, rate per decade and when it reaches (or passed) 1.5 °C. The exponential is fitted to the values themselves rather than to their logarithms, because some days in 1991–92 (after the Pinatubo eruption) were at or below the 1850–1900 level. Its curvature depends on measuring from 1850–1900, so it indicates acceleration, not a forecast.
 - **This year against every year since 1940, by calendar day:** one line per year, with the warmest complete year and the current year highlighted, and the 1991–2020 average for each calendar day as a dashed curve.
 - **Days above 1.5 °C each year:** from the first year with such a day; the current year is shown separately as incomplete.
+
+- **Year-end projection:** until 31 December, the page projects the current year's final average and its final count of days above 1.5 °C, each with a 90% range. It shows them as a light bar with a whisker in the annual and days-above charts, as a shaded band on the calendar-day chart, and as text giving the most likely rank and the chance of a record.
+
+### How the Projection Works
+
+The rest of the year is simulated about 1,000 times. Each simulation starts from the long-term warming trend and from how far the last 30 days sit above it. It then follows the actual ups and downs of a past year from the same date, using every year since 1991 except 1991–1993, when the Pinatubo eruption cooled the planet. It also takes into account NOAA's Oceanic Niño Index for the latest season NOAA has published (for example, Jul–Sep 2026: +2.16, El Niño), because El Niño tends to warm global temperatures over the following months and La Niña to cool them. The 90% range and the odds are calibrated against the forecasts this method would have made for every year from 2005 to 2025.
+
+**Why early-year projections are less certain.** The El Niño index is a lagging indicator. It describes Pacific sea temperatures from roughly two to four months earlier, so it can't see an El Niño or La Niña that is only just starting. That matters most early in the year, when most of the year is still to come. In 2026, the projection made on 1 March used the latest index available, which showed La Niña (−0.6 for November–January). It expected the year to finish at +1.39 °C, with a 90% range of +1.29 to +1.52 °C. El Niño then developed in April and became strong by June, and 2026 finished well above that range. Projections narrow as the year goes on: from September onward, the 90% range is typically under 0.1 °C wide.
+
+**In more detail,** `forecast_year` in `update.py`:
+
+1. A straight-line trend is fitted to the daily anomalies (relative to 1991–2020) from 1991 to the latest day.
+2. Two things describe the current state: how far the last 30 days sit above or below that trend, and the El Niño index (NOAA's Oceanic Niño Index, ONI) for the most recent 3-month season that NOAA had published by then (the season ending two months before the forecast month).
+3. Every past year since 1991 (except 1991–1993, cooled by the Pinatubo eruption) contributes its actual path for the rest of the year, starting on the same date and up to 15 days either side. From those paths the model learns, for each day ahead, how much of today's departure usually remains and how much each unit of El Niño (or La Niña) adds, and keeps each path's remaining day-to-day variation.
+4. Each simulation = trend + those two effects + one past year's variation + the stored pre-industrial offset. The year-end range, the days above 1.5 °C and the daily band come from the spread of the simulations.
+5. The odds of each rank (and of finishing above 1.5 °C) come from a bell curve centred on the simulations' median, with the width of their 90% range.
+6. Only data available on the forecast date is used, so a backtest never sees the future.
+
+**If the El Niño index is unavailable** (NOAA down, file format changed, or the latest season more than 4 months old), the projection falls back to the temperature-only model with its own calibration, and the page says so. The rest of the site is unaffected.
+
+**Calibration (ERA5, forecasts on the 15th of each month January–November, 2005–2025; 231 cases):**
+
+| | Temperature only | With El Niño index (used) |
+| --- | --- | --- |
+| 90% range held the outcome, raw | 83.5% | 81.8% |
+| Widening factor for 90% | 1.3 (`FORECAST_SPREAD`) → 90.0% | 1.35 (`FORECAST_SPREAD_ENSO`) → 90.9% |
+| Average error of the median | 0.039 °C | 0.036 °C |
+| Average width of the 90% range | 0.170 °C | 0.142 °C |
+| Brier score of rank odds (lower is better) | 0.346 | 0.315 |
+
+Grouped by the chance they stated, the El Niño model's odds came true about as often as they said: about 13% for forecasts that said about 13%, 41% for about 37%, 56% for about 63%, 88% for about 85%. Adding whether El Niño was strengthening or weakening did not help. Even a perfect forecast of El Niño four months ahead would only have cut the average error to 0.031 °C. Re-run `python tools/backtest_forecast.py` after any change to the model.
+
+**Limits.** The median was on average about 0.015 °C below the outcome, because a straight-line trend lags slightly behind recent warming. Some years remain badly missed: in June 2023 both models expected about +1.29 °C for a year that finished at +1.48 °C. Chances below 5% or above 95% are shown as "less than 5%" or "more than 95%". "Record" means the ERA5 record; other datasets rank years differently.
 
 It also shows the **annual average of every complete calendar year from 1940** (the start of the ERA5 record) with the warmest five years ranked. A year appears once all its days are in the data, normally in the first days of January.
 
@@ -47,6 +80,7 @@ No API keys or secrets are needed. The script uses only the Python standard libr
 
 ## Method
 
+- **El Niño index (projection only):** NOAA Climate Prediction Center, Oceanic Niño Index, `https://www.cpc.ncep.noaa.gov/data/indices/oni.ascii.txt`. NOAA data are in the public domain; the page credits NOAA CPC.
 - **Source:** ERA5 daily global mean 2 m air temperature and its anomaly relative to the 1991–2020 daily climatology, from [Copernicus Climate Pulse](https://pulse.climate.copernicus.eu/): `https://sites.ecmwf.int/data/climatepulse/data/series/era5_daily_series_2t_global.csv`. Data run from 1 January 1940 and are about 2 days behind real time. The newest day is flagged `PRELIMINARY` and usually becomes final about 3 days behind real time.
 - **Pre-industrial baseline:** the 1991–2020 anomaly plus the C3S daily offset to 1850–1900 ([C3S method](https://climate.copernicus.eu/climate-bulletin-about-data-and-analysis)):
 
@@ -88,6 +122,7 @@ No API keys or secrets are needed. The script uses only the Python standard libr
 | `update.py` | Daily download, checks, calculation and site build |
 | `offsets.csv` | Stored daily offsets, 1991–2020 to 1850–1900 |
 | `tools/make_offsets.py` | One-off generator for `offsets.csv` |
+| `tools/backtest_forecast.py` | Checks the year-end projection (both models, ranges and odds) against past years |
 | `tests/test_update.py` | Tests for offsets, running means, outputs and data checks |
 | `data/latest.json` | Latest values, committed daily |
 | `.github/workflows/daily.yml` | Schedule, build and publish |
