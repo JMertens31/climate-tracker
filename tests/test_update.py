@@ -562,6 +562,36 @@ class OniTest(unittest.TestCase):
             self.assertEqual(latest["projection"]["model"], "enso")
 
 
+class MultiYearTest(unittest.TestCase):
+    def test_means_match_brute_force(self):
+        rows = rows_from(lambda d: 1.0 + 0.03 * (d.year - 2000) + 0.1 * math.sin(d.toordinal() / 40),
+                         start=dt.date(2000, 1, 1), end=dt.date(2026, 11, 1))
+        means = update.multi_year_means(rows)
+        self.assertEqual(sorted(means), list(range(1, 21)))
+        for n in (1, 4, 20):
+            start = dt.date(2026 - n, 11, 2)
+            vals = [r["pi"] for r in rows if r["date"] >= start]
+            self.assertEqual(means[n]["start"], start.isoformat())
+            self.assertAlmostEqual(means[n]["value"], sum(vals) / len(vals), places=9)
+        self.assertEqual(means[4]["days"], 1461)          # includes 29 Feb 2024
+
+    def test_short_record_stops(self):
+        rows = rows_from(lambda d: 1.0, start=dt.date(2020, 1, 1), end=dt.date(2026, 11, 1))
+        self.assertEqual(sorted(update.multi_year_means(rows)), [1, 2, 3, 4, 5, 6])
+
+    def test_text(self):
+        m = {1: 1.514, 2: 1.507, 3: 1.544, 4: 1.503, 5: 1.442, 10: 1.333, 20: 1.155}
+        means = {n: {"value": v} for n, v in m.items()}
+        self.assertEqual(update.multi_year_text(means),
+                         "Averaged over the last 4 years, global temperature is above 1.5 \u00b0C (+1.503 \u00b0C); "
+                         "over 5 years it is +1.44 \u00b0C. The 10-year average is +1.33 \u00b0C and the "
+                         "20-year average is +1.16 \u00b0C.")
+        none = {n: {"value": v} for n, v in {1: 1.47, 2: 1.45, 10: 1.3, 20: 1.1}.items()}
+        self.assertIn("No multi-year average is above 1.5 \u00b0C yet", update.multi_year_text(none))
+        one = {n: {"value": v} for n, v in {1: 1.52, 2: 1.48, 10: 1.3, 20: 1.1}.items()}
+        self.assertIn("Averaged over the last 12 months", update.multi_year_text(one))
+
+
 class ValidationTest(unittest.TestCase):
     def setUp(self):
         self.ano = lambda d: 0.5

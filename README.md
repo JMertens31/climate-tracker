@@ -4,7 +4,7 @@ A daily-updated dashboard of global surface air temperature above the 1850–190
 
 **Live dashboard:** `https://<owner>.github.io/<repo>/` (replace with your Pages URL)
 
-The page is laid out in this order: global surface air temperature anomaly (the running means below, as bars), daily values for the last 60 days, days above 1.5 °C each year, the long-term anomaly since 1991, this year against every year by calendar day, and annual averages. The top chart shows five running means as bars, each ending on the latest available day, with the 365-day mean in blue and dashed lines at 1.5 °C, 2 °C and the 1991–2020 average:
+The page is laid out in this order: global surface air temperature anomaly (the running means below, as bars), daily values for the last 60 days, days above 1.5 °C each year, this year against every year by calendar day, the long-term anomaly since 1991, and annual averages. The top chart shows five running means as bars, each ending on the latest available day, with the 365-day mean in blue and dashed lines at 1.5 °C, 2 °C and the 1991–2020 average:
 
 | Measure | Definition |
 | --- | --- |
@@ -64,7 +64,7 @@ A **year lookup** below the annual chart lets readers pick any complete year (fr
 
 "On record" means the ERA5 record, which starts in 1940. Years are compared at the 0.001 °C precision shown on the page; equal values count as ties, not as warmer. The rankings are calculated in `update.py` (`year_context`) and tested; the page only turns them into sentences.
 
-Each is also compared with the same window one year earlier.
+Hovering over a bar shows the same window one year earlier. Under the chart, a sentence reports the longest span of whole years (counted back from the latest day) whose average is above 1.5 °C, the next-longest span's average, and the 10-year and 20-year averages. A value that would round to 1.50 is shown to three decimals so it is clear which side of 1.5 °C it is on. All averages from 1 to 20 years are also in `latest.json`.
 
 ## How It Works
 

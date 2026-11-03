@@ -664,6 +664,7 @@ def compute(rows: list[dict], oni: dict[int, float] | None = None) -> dict:
         },
         "annual_rows": annual,
         "baselines": baseline_levels(rows),
+        "multi_year": multi_year_means(rows),
         "annual": {
             "years": [a["year"] for a in annual],
             "values": [round(a["pi"], 3) for a in annual],
@@ -747,6 +748,7 @@ def latest_json(result: dict) -> dict:
                  "reaches_1_5": result["fits"]["exponential"]["reaches_threshold"]},
         },
         "days_above_1_5_this_year": (result["days_above"]["counts"] or [None])[-1],
+        "multi_year_means": {str(n): round(m["value"], 3) for n, m in result["multi_year"].items()},
         "projection": None if not result["forecast"] else {
             "year": result["forecast"]["year"],
             "annual_median": round(result["forecast"]["annual_median"], 3),
@@ -831,6 +833,55 @@ def forecast_method_text(fc: dict | None) -> str:
             f"index lags by several months; ")
 
 
+def multi_year_means(rows: list[dict], max_years: int = 20) -> dict[int, dict]:
+    """Mean pre-industrial anomaly over the last n whole years (n = 1..max_years), each ending on the
+    latest day. Windows run from the day after the same date n years earlier, so n years = 365 or 366
+    days per year. Only windows fully covered by the data are returned."""
+    prefix = [0.0]
+    for r in rows:
+        prefix.append(prefix[-1] + r["pi"])
+    index = {r["date"]: i for i, r in enumerate(rows)}
+    last = rows[-1]["date"]
+    out, start = {}, last
+    for n in range(1, max_years + 1):
+        start = one_year_earlier(start)
+        i = index.get(start)
+        if i is None:
+            break
+        days = len(rows) - 1 - i
+        out[n] = {"value": (prefix[-1] - prefix[i + 1]) / days, "start": rows[i + 1]["date"].isoformat(), "days": days}
+    return out
+
+
+def fmt_vs_threshold(v: float, threshold: float = PARIS_LEVEL) -> str:
+    """Two decimals, or three when two would hide which side of the threshold the value is on."""
+    two = round(v, 2)
+    if (v > threshold) != (two > threshold) or two == threshold:
+        return f"{v:+.3f}".replace("-", "\u2212")
+    return fmt_signed(v)
+
+
+def multi_year_text(means: dict[int, dict], threshold: float = PARIS_LEVEL) -> str:
+    if 1 not in means:
+        return ""
+    above = [n for n, m in means.items() if m["value"] > threshold]
+    longest = max(above) if above else 0
+    t = f"{threshold:g} \u00b0C"
+    if longest == 0:
+        out = (f"No multi-year average is above {t} yet: the last 12 months average "
+               f"{fmt_vs_threshold(means[1]['value'])} \u00b0C.")
+    else:
+        span = "the last 12 months" if longest == 1 else f"the last {longest} years"
+        out = f"Averaged over {span}, global temperature is above {t} ({fmt_vs_threshold(means[longest]['value'])} \u00b0C)"
+        if longest + 1 in means:
+            out += f"; over {longest + 1} years it is {fmt_vs_threshold(means[longest + 1]['value'])} \u00b0C"
+        out += "."
+    extra = [f"{n}-year average is {fmt_signed(means[n]['value'])} \u00b0C" for n in (10, 20) if n in means and n > longest + 1]
+    if extra:
+        out += " The " + " and the ".join(extra) + "."
+    return out
+
+
 def days_above_text(above: dict, latest_iso: str) -> str:
     if not above["years"]:
         return "No day in the record has been above 1.5 \u00b0C."
@@ -901,7 +952,7 @@ def render_html(result: dict) -> str:
     year = dt.date.fromisoformat(result["latest_date"]).year
     return (HTML_TEMPLATE
             .replace("{{NOW_SENTENCE}}", html.escape(now_sentence))
-            .replace("{{NOW_CHANGES}}", html.escape(changes))
+            .replace("{{MULTI_YEAR_SENTENCE}}", html.escape(multi_year_text(result["multi_year"])))
             .replace("{{BASE_NOTE}}", f", and the 1991&ndash;2020 average ({base['value']:+.2f} &deg;C)" if base else "")
             .replace("{{LATEST}}", html.escape(fmt_date(result["latest_date"]) + prelim))
             .replace("{{GENERATED}}", html.escape(result["generated_utc"]))
@@ -945,7 +996,8 @@ HTML_TEMPLATE = r"""<!doctype html>
   body { margin: 0; background: var(--white); color: var(--ink);
          font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size: 15px; line-height: 1.55; }
   .wrap { max-width: 1120px; margin: 0 auto; padding: 32px 16px 48px; }
-  header { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+           margin-bottom: 40px; padding-bottom: 16px; border-bottom: 1px solid var(--track); }
   .site-name { font-weight: 700; font-size: 16px; }
   h1 { font-size: 30px; font-weight: 700; line-height: 1.2; margin: 32px 0 8px; }
   h1 .hl { color: var(--accent); }
@@ -953,6 +1005,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   .lead { margin: 0 0 24px; max-width: 760px; }
   .meta { font-size: 13px; }
   .small { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
+  .multi-year { margin: 12px 0 0; font-size: 14.5px; }
   .forecast { background: var(--tint); border-left: 0; border-radius: 12px; padding: 12px 16px; font-weight: 500; }
   .card { margin: 0 0 40px; }
   .card p { margin: 0 0 12px; font-size: 13.5px; }
@@ -993,7 +1046,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     <h2>Global Surface Air Temperature Anomaly</h2>
     <p>Bars show each running average ending on the latest day of available data. Dashed lines mark 1.5 &deg;C (Paris Commitment), 2 &deg;C{{BASE_NOTE}}.</p>
     <div class="chart-box tall"><canvas id="now" role="img" aria-label="Current 30-day, 90-day, 180-day, 365-day and year-to-date mean temperature anomalies"></canvas></div>
-    <p class="small">Change from the same period a year earlier: {{NOW_CHANGES}}.</p>
+    <p class="multi-year">{{MULTI_YEAR_SENTENCE}}</p>
   </section>
 
   <section class="card">
@@ -1009,16 +1062,16 @@ HTML_TEMPLATE = r"""<!doctype html>
   </section>
 
   <section class="card">
+    <h2>{{CURRENT_YEAR}} Against Every Year Since {{CAL_FIRST}}</h2>
+    <p>Each grey line is one year from {{CAL_FIRST}} to {{CAL_PREV}}, darker for more recent years. {{RECORD_YEAR}}, the warmest complete year, is in red and {{CURRENT_YEAR}} so far in blue.{{CAL_FORECAST_NOTE}} The grey dashed curve is the 1991&ndash;2020 average for each date, which rises and falls with the seasons. Hover to compare a date.</p>
+    <div class="chart-box tall"><canvas id="calendar" role="img" aria-label="Daily temperature anomaly by calendar day for every year since {{CAL_FIRST}}"></canvas></div>
+  </section>
+
+  <section class="card">
     <h2>Long Term Global Surface Air Temperature Anomaly</h2>
     <p>Coloured lines are the averages of the preceding 30 days (grey) and 365 days (blue), since {{TREND_FROM}}. Black is a straight-line trend and purple an exponential trend, both fitted to the daily values. Dashed lines mark 1.5 &deg;C and the 1991&ndash;2020 average. The exponential fit depends on measuring from 1850&ndash;1900; it shows whether warming is speeding up, not a forecast.</p>
     <p>{{TREND_SENTENCE}}</p>
     <div class="chart-box tall"><canvas id="trend" role="img" aria-label="Running mean temperature anomalies and fitted trends since {{TREND_FROM}}"></canvas></div>
-  </section>
-
-  <section class="card">
-    <h2>{{CURRENT_YEAR}} Against Every Year Since {{CAL_FIRST}}</h2>
-    <p>Each grey line is one year from {{CAL_FIRST}} to {{CAL_PREV}}, darker for more recent years. {{RECORD_YEAR}}, the warmest complete year, is in red and {{CURRENT_YEAR}} so far in blue.{{CAL_FORECAST_NOTE}} The grey dashed curve is the 1991&ndash;2020 average for each date, which rises and falls with the seasons. Hover to compare a date.</p>
-    <div class="chart-box tall"><canvas id="calendar" role="img" aria-label="Daily temperature anomaly by calendar day for every year since {{CAL_FIRST}}"></canvas></div>
   </section>
 
   <section class="card">
