@@ -1,7 +1,7 @@
 {
   "latest_date": "2026-11-01",
   "latest_status": "PRELIMINARY",
-  "generated_utc": "2026-11-03 13:19 UTC",
+  "generated_utc": "2026-11-03 14:45 UTC",
   "baseline": "1850-1900 (C3S daily offset applied to ERA5 1991-2020 anomalies)",
   "units": "degC",
   "latest_daily": 1.944,
@@ -46,5 +46,24 @@
     "year": 2024,
     "value": 1.599
   },
+  "trend_since_1991": {
+    "linear": {
+      "value_now": 1.435,
+      "per_decade": 0.263,
+      "reaches_1_5": {
+        "date": "2029-04-18",
+        "passed": false
+      }
+    },
+    "exponential": {
+      "value_now": 1.525,
+      "per_decade_now": 0.491,
+      "reaches_1_5": {
+        "date": "2026-03-29",
+        "passed": true
+      }
+    }
+  },
+  "days_above_1_5_this_year": 169,
   "source": "https://sites.ecmwf.int/data/climatepulse/data/series/era5_daily_series_2t_global.csv"
 }
