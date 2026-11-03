@@ -2,7 +2,7 @@
 
 A daily-updated dashboard of global surface air temperature above the 1850–1900 pre-industrial baseline, built from Copernicus ERA5 data.
 
-**Live dashboard:** `https://<owner>.github.io/<repo>/` (replace with your Pages URL)
+**Live dashboard:** (https://jmertens31.github.io/climate-tracker/)
 
 The top chart shows five running means as bars, each ending on the latest available day, with the 365-day mean in blue and dashed lines at 1.5 °C, 2 °C and the 1991–2020 average:
 
