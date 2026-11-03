@@ -970,11 +970,13 @@ def render_html(result: dict) -> str:
             .replace("{{ANNUAL_FIRST}}", str(annual[0]["year"]))
             .replace("{{ANNUAL_LAST}}", str(last_year["year"]))
             .replace("{{ANNUAL_SENTENCE}}", html.escape(sentence))
-            .replace("{{FORECAST_SENTENCE}}", f'<p class="forecast">{html.escape(forecast_text(fc, result["forecast_odds"]))}</p>' if fc else "")
+            .replace("{{FORECAST_SENTENCE}}", f'<div class="forecast"><p class="forecast-main">{html.escape(forecast_text(fc, result["forecast_odds"]))}</p>'
+                     f'<p class="forecast-method">{html.escape(forecast_method_text(fc))}'
+                     f'<a href="{README_METHOD_URL}">see how the projection works</a>.</p></div>' if fc else "")
             .replace("{{FORECAST_DAYS_SENTENCE}}", html.escape(forecast_days_text(fc)))
-            .replace("{{FORECAST_METHOD}}", f'<p class="small">{html.escape(forecast_method_text(fc))}'
-                                             f'<a href="{README_METHOD_URL}">see how the projection works</a>.</p>' if fc else "")
-            .replace("{{CAL_FORECAST_NOTE}}", " The shaded band continues it to 31 December: the middle 90% of projected paths, with the dashed line as the median." if fc else "")
+            .replace("{{CAL_FORECAST_NOTE}}", " The shaded band continues it to 31 December: the middle 90% of projected paths, with the dashed line as the median ("
+                     f'<a href="{README_METHOD_URL}">see how the projection works</a>).' if fc else "")
+            .replace("{{PROJECTION_LINK}}", f' (<a href="{README_METHOD_URL}">see how the projection works</a>)' if fc else "")
             .replace("{{WARMEST_N}}", str(min(WARMEST_LIST, len(ranked))))
             .replace("{{WARMEST_ROWS}}", table_rows)
             .replace("{{DATA}}", data_json))
@@ -1006,7 +1008,10 @@ HTML_TEMPLATE = r"""<!doctype html>
   .meta { font-size: 13px; }
   .small { font-size: 13px; color: var(--muted); margin: 10px 0 0; }
   .multi-year { margin: 12px 0 0; font-size: 14.5px; }
-  .forecast { background: var(--tint); border-left: 0; border-radius: 12px; padding: 12px 16px; font-weight: 500; }
+  .forecast { background: var(--tint); border-radius: 12px; padding: 12px 16px; margin: 0 0 16px; }
+  .forecast p { margin: 0; }
+  .forecast-main { font-weight: 500; }
+  .forecast-method { font-size: 13px; color: var(--muted); margin-top: 8px !important; }
   .card { margin: 0 0 40px; }
   .card p { margin: 0 0 12px; font-size: 13.5px; }
   .chart-box { position: relative; height: 360px; }
@@ -1027,8 +1032,8 @@ HTML_TEMPLATE = r"""<!doctype html>
   .lookup-value span { font-size: 15px; font-weight: 400; color: var(--muted); margin-left: 6px; }
   .lookup-result ul { margin: 10px 0 0; padding-left: 20px; }
   .lookup-result li { margin-bottom: 6px; }
-  .rank { border-collapse: collapse; margin-top: 20px; font-size: 13.5px; min-width: 320px; }
-  .rank caption { text-align: left; font-weight: 700; margin-bottom: 6px; }
+  .rank { border-collapse: collapse; margin-top: 28px; font-size: 13.5px; min-width: 320px; }
+  .rank caption { text-align: left; font-size: 17px; font-weight: 700; margin-bottom: 8px; }
   .rank th, .rank td { padding: 6px 16px 6px 0; border-bottom: 1px solid var(--track); text-align: left; }
   .rank th { font-weight: 600; color: var(--muted); }
   .rank td:nth-child(3), .rank td:nth-child(4), .rank th:nth-child(3), .rank th:nth-child(4) { text-align: right; }
@@ -1044,9 +1049,8 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   <section class="card">
     <h2>Global Surface Air Temperature Anomaly</h2>
-    <p>Bars show each running average ending on the latest day of available data. Dashed lines mark 1.5 &deg;C (Paris Commitment), 2 &deg;C{{BASE_NOTE}}.</p>
+    <p>Bars show each running average ending on the latest day of available data. Dashed lines mark 1.5 &deg;C (Paris Commitment), 2 &deg;C{{BASE_NOTE}}. {{MULTI_YEAR_SENTENCE}} Note that the Paris Agreement&rsquo;s 1.5 &deg;C limit refers to a long-term average and these values do not, on their own, constitute a breach of that limit.</p>
     <div class="chart-box tall"><canvas id="now" role="img" aria-label="Current 30-day, 90-day, 180-day, 365-day and year-to-date mean temperature anomalies"></canvas></div>
-    <p class="multi-year">{{MULTI_YEAR_SENTENCE}}</p>
   </section>
 
   <section class="card">
@@ -1057,7 +1061,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   <section class="card">
     <h2>Days Above 1.5 &deg;C Each Year</h2>
-    <p>{{ABOVE_SENTENCE}} {{FORECAST_DAYS_SENTENCE}} Each bar counts the days in that year whose global mean was more than 1.5 &deg;C above 1850&ndash;1900, from {{ABOVE_FIRST}}, the first year with one. For the current year, dark blue is days so far, light blue the projected remainder, and the whisker the 90% range.</p>
+    <p>{{ABOVE_SENTENCE}} {{FORECAST_DAYS_SENTENCE}} Each bar counts the days in that year whose global mean was more than 1.5 &deg;C above 1850&ndash;1900, from {{ABOVE_FIRST}}, the first year with one. For the current year, dark blue is days so far, light blue the projected remainder, and the whisker the 90% range{{PROJECTION_LINK}}.</p>
     <div class="chart-box short"><canvas id="above" role="img" aria-label="Number of days above 1.5 degrees per year"></canvas></div>
   </section>
 
@@ -1069,17 +1073,16 @@ HTML_TEMPLATE = r"""<!doctype html>
 
   <section class="card">
     <h2>Long Term Global Surface Air Temperature Anomaly</h2>
-    <p>Coloured lines are the averages of the preceding 30 days (grey) and 365 days (blue), since {{TREND_FROM}}. Black is a straight-line trend and purple an exponential trend, both fitted to the daily values. Dashed lines mark 1.5 &deg;C and the 1991&ndash;2020 average. The exponential fit depends on measuring from 1850&ndash;1900; it shows whether warming is speeding up, not a forecast.</p>
+    <p>Coloured lines are the averages of the preceding 30 days (grey) and 365 days (blue), since {{TREND_FROM}}. Black is a straight-line trend and purple an exponential trend, both fitted to the daily values. Dashed lines mark 1.5 &deg;C and the 1991&ndash;2020 average. The exponential fit depends on measuring from 1850&ndash;1900; it extends the recent acceleration of warming forward and should not be read as a forecast or a long-term certainty. It is shown to illustrate a broader range of possible futures.</p>
     <p>{{TREND_SENTENCE}}</p>
     <div class="chart-box tall"><canvas id="trend" role="img" aria-label="Running mean temperature anomalies and fitted trends since {{TREND_FROM}}"></canvas></div>
   </section>
 
   <section class="card">
-    <h2>Annual Averages, {{ANNUAL_FIRST}}&ndash;{{ANNUAL_LAST}}</h2>
+    <h2>Annual Averages, {{ANNUAL_FIRST}}&ndash;Present</h2>
     <p>{{ANNUAL_SENTENCE}} Each bar is a complete calendar year; the warmest is in red, the year selected below in orange and the projected current year in light blue. ERA5 values before about 1950 rest on fewer observations and are less certain. <a href="data/annual.csv">Download annual values (CSV)</a>.</p>
     {{FORECAST_SENTENCE}}
     <div class="chart-box"><canvas id="annual" role="img" aria-label="Annual mean temperature anomalies {{ANNUAL_FIRST}} to {{ANNUAL_LAST}}"></canvas></div>
-    {{FORECAST_METHOD}}
 
     <div class="lookup">
       <h3>How Does a Year Compare?</h3>
@@ -1097,7 +1100,6 @@ HTML_TEMPLATE = r"""<!doctype html>
     </table>
   </section>
 
-  <div class="note"><strong>Reading these numbers:</strong> the Paris Agreement's 1.5 &deg;C limit refers to warming averaged over about 20 years. A 30-day, 365-day or calendar-year value above 1.5 &deg;C is not, on its own, a breach of that limit.</div>
 
   <footer>
     <p><strong>Method.</strong> ERA5 daily global mean 2 m air temperature anomalies relative to 1991&ndash;2020, from <a href="https://pulse.climate.copernicus.eu/">Copernicus Climate Pulse</a> (<a href="{{SOURCE_URL}}">data file</a>). Converted to the 1850&ndash;1900 baseline with the C3S daily offset (0.79&ndash;0.97 &deg;C by day of year; <a href="https://climate.copernicus.eu/climate-bulletin-about-data-and-analysis">C3S method</a>). Pre-industrial values carry about &plusmn;0.1 &deg;C uncertainty from the offset. <a href="data/series.csv">Download the full daily series (CSV)</a>.</p>

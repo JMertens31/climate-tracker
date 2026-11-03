@@ -64,7 +64,7 @@ A **year lookup** below the annual chart lets readers pick any complete year (fr
 
 "On record" means the ERA5 record, which starts in 1940. Years are compared at the 0.001 °C precision shown on the page; equal values count as ties, not as warmer. The rankings are calculated in `update.py` (`year_context`) and tested; the page only turns them into sentences.
 
-Hovering over a bar shows the same window one year earlier. Under the chart, a sentence reports the longest span of whole years (counted back from the latest day) whose average is above 1.5 °C, the next-longest span's average, and the 10-year and 20-year averages. A value that would round to 1.50 is shown to three decimals so it is clear which side of 1.5 °C it is on. All averages from 1 to 20 years are also in `latest.json`.
+Hovering over a bar shows the same window one year earlier. Above the chart, a sentence reports the longest span of whole years (counted back from the latest day) whose average is above 1.5 °C, the next-longest span's average, and the 10-year and 20-year averages. A value that would round to 1.50 is shown to three decimals so it is clear which side of 1.5 °C it is on. All averages from 1 to 20 years are also in `latest.json`. The section ends with a reminder that the Paris Agreement's 1.5 °C limit refers to a long-term average, so these values are not, on their own, a breach of it.
 
 ## How It Works
 

@@ -162,7 +162,7 @@ class AnnualTest(unittest.TestCase):
         self.assertEqual(latest["last_complete_year"]["year"], 2025)
         self.assertEqual(latest["warmest_year"]["year"], ranked[0]["year"])
         html = (self.site / "index.html").read_text()
-        self.assertIn("Annual Averages, 2015&ndash;2025", html)
+        self.assertIn("Annual Averages, 2015&ndash;Present", html)
         self.assertIn("Warmest 5 Years", html)
         self.assertNotIn("{{", html)
 
@@ -557,6 +557,9 @@ class OniTest(unittest.TestCase):
             html = (Path(tmp) / "site" / "index.html").read_text()
             self.assertIn("NOAA&#x27;s El Ni\u00f1o index (Jul\u2013Sep 2026: ", html)
             self.assertIn('<a href="https://github.com/JMertens31/climate-tracker#how-the-projection-works">see how the projection works</a>.', html)
+            self.assertEqual(html.count("#how-the-projection-works"), 3)   # annual box, days above, calendar
+            self.assertNotIn("Reading these numbers", html)
+            self.assertIn("Annual Averages, 1985&ndash;Present", html)
             self.assertIn("NOAA Climate Prediction Center", html)
             latest = json.loads((Path(tmp) / "latest.json").read_text())
             self.assertEqual(latest["projection"]["model"], "enso")
