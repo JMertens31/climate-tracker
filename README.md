@@ -14,6 +14,12 @@ The top chart shows five running means as bars, each ending on the latest availa
 | 365-day (headline) | Mean of the last 365 daily values |
 | Year to date | Mean from 1 January of the current year to the latest day |
 
+Other sections:
+
+- **Running means and long-term trend since 1991:** the 30/90/180/365-day means from 1 January 1991 (the start of the 1991–2020 period), with two trends fitted by least squares to every daily value since then: a straight line, and an exponential curve (y = A·e^(kt)). The page states each trend's current level, rate per decade and when it reaches (or passed) 1.5 °C. The exponential is fitted to the values themselves rather than to their logarithms, because some days in 1991–92 (after the Pinatubo eruption) were at or below the 1850–1900 level. Its curvature depends on measuring from 1850–1900, so it indicates acceleration, not a forecast.
+- **This year against every year since 1940, by calendar day:** one line per year, with the warmest complete year and the current year highlighted, and the 1991–2020 average for each calendar day as a dashed curve.
+- **Days above 1.5 °C each year:** from the first year with such a day; the current year is shown separately as incomplete.
+
 It also shows the **annual average of every complete calendar year from 1940** (the start of the ERA5 record) with the warmest five years ranked. A year appears once all its days are in the data, normally in the first days of January.
 
 A **year lookup** below the annual chart lets readers pick any complete year (from the menu or by clicking its bar) and see:
@@ -70,7 +76,7 @@ No API keys or secrets are needed. The script uses only the Python standard libr
 | To change | Edit |
 | --- | --- |
 | Reference periods drawn as dashed lines (for example, add `("1981\u20132010 average", 1981, 2010)`) | `BASELINES` at the top of `update.py`; any period from 1941 onward works |
-| Window lengths, chart history, freshness limit | Constants at the top of `update.py` (`WINDOWS`, `TREND_YEARS`, `DAILY_DAYS`, `MAX_AGE_DAYS`) |
+| Window lengths, chart history, freshness limit | Constants at the top of `update.py` (`WINDOWS`, `TREND_START`, `TREND_SAMPLE_DAYS`, `DAILY_DAYS`, `MAX_AGE_DAYS`) |
 | Run time | `cron` line in `.github/workflows/daily.yml` (times are UTC) |
 | Page text and styling | `HTML_TEMPLATE` in `update.py` |
 | Offsets, if C3S revises them | Update the formula in `tools/make_offsets.py`, run `python tools/make_offsets.py`, commit the new `offsets.csv` and note the change here |

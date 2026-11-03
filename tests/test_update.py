@@ -244,6 +244,140 @@ class BaselineTest(unittest.TestCase):
         self.assertNotIn("{{", (self.site / "index.html").read_text())
 
 
+def rows_from(fn, start=dt.date(1991, 1, 1), end=dt.date(2026, 10, 31)):
+    """Minimal rows with a known pre-industrial anomaly, for testing the analysis functions directly."""
+    out, d = [], start
+    while d <= end:
+        out.append({"date": d, "pi": fn(d)})
+        d += dt.timedelta(days=1)
+    return out
+
+
+class TrendFitTest(unittest.TestCase):
+    def test_linear_recovers_known_line(self):
+        t0 = update.decimal_year(dt.date(1991, 1, 1))
+        rows = rows_from(lambda d: 0.5 + 0.025 * (update.decimal_year(d) - t0))   # 0.25 C/decade
+        fit = update.fit_trends(rows)
+        self.assertAlmostEqual(fit["linear"]["a"], 0.5, places=6)
+        self.assertAlmostEqual(fit["linear"]["per_decade"], 0.25, places=6)
+        # reaches 1.5 when t = 40 years -> 2031-01-01
+        self.assertEqual(fit["linear"]["reaches_threshold"]["date"][:7], "2031-01")
+        self.assertFalse(fit["linear"]["reaches_threshold"]["passed"])
+
+    def test_exponential_recovers_known_curve(self):
+        t0 = update.decimal_year(dt.date(1991, 1, 1))
+        rows = rows_from(lambda d: 0.6 * math.exp(0.02 * (update.decimal_year(d) - t0)))
+        fit = update.fit_trends(rows)
+        self.assertAlmostEqual(fit["exponential"]["A"], 0.6, places=6)
+        self.assertAlmostEqual(fit["exponential"]["k"], 0.02, places=6)
+        # 1.5 = 0.6 e^(0.02 t) -> t = ln(2.5)/0.02 = 45.8 years -> late 2036
+        self.assertEqual(fit["exponential"]["reaches_threshold"]["date"][:4], "2036")
+        exp_now = fit["exponential"]["now"]
+        self.assertAlmostEqual(fit["exponential"]["per_decade_now"], exp_now * (math.exp(0.2) - 1), places=9)
+
+    def test_exponential_handles_values_at_or_below_zero(self):
+        t0 = update.decimal_year(dt.date(1991, 1, 1))
+        base = lambda d: 0.6 * math.exp(0.02 * (update.decimal_year(d) - t0))
+        # a few negative days (as after Pinatubo) must not break the fit
+        rows = rows_from(lambda d: -0.05 if d.year == 1992 and d.month < 3 else base(d))
+        fit = update.fit_trends(rows)
+        self.assertIsNotNone(fit["exponential"])
+        self.assertAlmostEqual(fit["exponential"]["k"], 0.02, delta=0.001)
+
+    def test_exponential_matches_brute_force_least_squares(self):
+        rows = rows_from(lambda d: 0.5 + 0.03 * (d.year - 1991) + 0.1 * math.sin(d.toordinal() / 50))
+        fit = update.fit_trends(rows)["exponential"]
+        t0 = update.decimal_year(dt.date(1991, 1, 1))
+        ts = [update.decimal_year(r["date"]) - t0 for r in rows]
+        ys = [r["pi"] for r in rows]
+        def sse(A, k):
+            return sum((y - A * math.exp(k * t)) ** 2 for y, t in zip(ys, ts))
+        best = sse(fit["A"], fit["k"])
+        for dA, dk in ((0.001, 0), (-0.001, 0), (0, 0.0001), (0, -0.0001)):
+            self.assertLessEqual(best, sse(fit["A"] + dA, fit["k"] + dk))
+
+    def test_no_crossing_when_above_from_the_start(self):
+        rows = rows_from(lambda d: 1.6 + 0.001 * (d.year - 1991))
+        self.assertIsNone(update.fit_trends(rows)["linear"]["reaches_threshold"])
+
+    def test_crossing_already_passed(self):
+        t0 = update.decimal_year(dt.date(1991, 1, 1))
+        rows = rows_from(lambda d: 0.5 + 0.04 * (update.decimal_year(d) - t0))   # 1.5 after 25 years -> 2016
+        c = update.fit_trends(rows)["linear"]["reaches_threshold"]
+        self.assertTrue(c["passed"])
+        self.assertEqual(c["date"][:4], "2016")
+        self.assertEqual(update.crossing_text(c, "; it"), "; it passed 1.5 \u00b0C in January 2016.")
+
+    def test_decimal_year_round_trip(self):
+        for d in (dt.date(2024, 2, 29), dt.date(2026, 10, 31), dt.date(1991, 1, 1)):
+            self.assertEqual(update.from_decimal_year(update.decimal_year(d)), d)
+
+
+class DaysAboveTest(unittest.TestCase):
+    def test_counts_start_at_first_year_and_include_zero_years(self):
+        hot = {dt.date(2016, 3, 1), dt.date(2016, 3, 2), dt.date(2019, 7, 4)}
+        rows = rows_from(lambda d: 1.6 if d in hot else (1.5 if d.year == 2017 else 1.0),
+                         start=dt.date(2010, 1, 1), end=dt.date(2020, 6, 30))
+        res = update.days_above(rows)
+        self.assertEqual(res["first_day"], "2016-03-01")
+        self.assertEqual(res["years"], [2016, 2017, 2018, 2019, 2020])
+        self.assertEqual(res["counts"], [2, 0, 0, 1, 0])   # exactly 1.5 is not "above"
+
+    def test_none_above(self):
+        res = update.days_above(rows_from(lambda d: 1.0, start=dt.date(2020, 1, 1)))
+        self.assertEqual(res["years"], [])
+
+    def test_text(self):
+        above = {"years": [2016, 2017, 2026], "counts": [5, 9, 3], "first_day": "2016-02-10"}
+        txt = update.days_above_text(above, "2026-10-31")
+        self.assertIn("10 Feb 2016", txt)
+        self.assertIn("2017 had the most, 9 days.", txt)
+        self.assertIn("2026 has had 3 days so far", txt)
+
+
+class CalendarTest(unittest.TestCase):
+    def test_leap_and_partial_years(self):
+        rows = rows_from(lambda d: round(d.month / 10, 2), start=dt.date(2023, 12, 30), end=dt.date(2025, 1, 2))
+        cal = update.by_calendar_day(rows)
+        self.assertEqual(len(cal["slots"]), 366)
+        self.assertEqual(cal["years"], [2023, 2024, 2025])
+        feb29 = cal["slots"].index("02-29")
+        v = dict(zip(cal["years"], cal["values"]))
+        self.assertEqual(v[2024][feb29], 0.2)
+        self.assertIsNone(v[2023][feb29])
+        self.assertEqual(sum(x is not None for x in v[2023]), 2)     # 30-31 Dec only
+        self.assertEqual(sum(x is not None for x in v[2024]), 366)
+        self.assertEqual(v[2025][cal["slots"].index("01-02")], 0.1)
+        self.assertIsNone(cal["base_1991_2020"])                  # 1991-2020 not covered here
+
+    def test_daily_1991_2020_average(self):
+        rows = rows_from(lambda d: 0.5 + 0.01 * (d.year - 1991), start=dt.date(1990, 1, 1), end=dt.date(2026, 1, 1))
+        cal = update.by_calendar_day(rows)
+        base = cal["base_1991_2020"]
+        self.assertEqual(len(base), 366)
+        self.assertAlmostEqual(base[0], 0.5 + 0.01 * 14.5, places=3)   # mean over 30 years
+        self.assertAlmostEqual(base[cal["slots"].index("02-29")], 0.5 + 0.01 * 15, places=3)  # 1992..2020 leap years
+
+
+class PageSectionsTest(unittest.TestCase):
+    def test_new_sections_render(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ano = lambda d: round(0.02 * (d.year - 2000) + 0.1 * math.sin(d.toordinal() / 30.0) + 0.7, 3)
+            text = synthetic_csv(dt.date(1985, 1, 1), dt.date(2026, 10, 31), ano)
+            res = update.build(text, today=dt.date(2026, 11, 2), site_dir=Path(tmp) / "site",
+                               repo_latest=Path(tmp) / "latest.json")
+            html = (Path(tmp) / "site" / "index.html").read_text()
+            self.assertIn("Running Means and Long-Term Trend Since 1991", html)
+            self.assertIn("2026 Against Every Year Since 1985", html)
+            self.assertIn("Days Above 1.5 &deg;C Each Year", html)
+            self.assertNotIn("{{", html)
+            self.assertEqual(res["trend"]["dates"][-1], "2026-10-31")
+            self.assertTrue(res["trend"]["dates"][0] >= "1991-01-01")
+            self.assertEqual(len(res["trend"]["linear"]), len(res["trend"]["dates"]))
+            latest = json.loads((Path(tmp) / "latest.json").read_text())
+            self.assertIn("trend_since_1991", latest)
+
+
 class ValidationTest(unittest.TestCase):
     def setUp(self):
         self.ano = lambda d: 0.5
