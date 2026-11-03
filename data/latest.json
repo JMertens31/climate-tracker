@@ -1,7 +1,7 @@
 {
   "latest_date": "2026-11-01",
   "latest_status": "PRELIMINARY",
-  "generated_utc": "2026-11-03 14:45 UTC",
+  "generated_utc": "2026-11-03 16:06 UTC",
   "baseline": "1850-1900 (C3S daily offset applied to ERA5 1991-2020 anomalies)",
   "units": "degC",
   "latest_daily": 1.944,
@@ -65,5 +65,28 @@
     }
   },
   "days_above_1_5_this_year": 169,
+  "projection": {
+    "year": 2026,
+    "annual_median": 1.576,
+    "annual_90pct": [
+      1.548,
+      1.603
+    ],
+    "days_above_1_5_median": 229.0,
+    "days_above_1_5_90pct": [
+      223.6,
+      229.0
+    ],
+    "rank_share": {
+      "1": 0.082,
+      "2": 0.918
+    },
+    "chance_above_1_5": 1.0,
+    "model": "enso",
+    "oni_used": {
+      "season": "Jul\u2013Sep 2026",
+      "value": 2.16
+    }
+  },
   "source": "https://sites.ecmwf.int/data/climatepulse/data/series/era5_daily_series_2t_global.csv"
 }
