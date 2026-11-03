@@ -1,7 +1,7 @@
 {
   "latest_date": "2026-11-01",
   "latest_status": "PRELIMINARY",
-  "generated_utc": "2026-11-03 16:33 UTC",
+  "generated_utc": "2026-11-03 16:50 UTC",
   "baseline": "1850-1900 (C3S daily offset applied to ERA5 1991-2020 anomalies)",
   "units": "degC",
   "latest_daily": 1.944,
@@ -65,6 +65,28 @@
     }
   },
   "days_above_1_5_this_year": 169,
+  "multi_year_means": {
+    "1": 1.514,
+    "2": 1.507,
+    "3": 1.544,
+    "4": 1.503,
+    "5": 1.442,
+    "6": 1.396,
+    "7": 1.386,
+    "8": 1.369,
+    "9": 1.344,
+    "10": 1.333,
+    "11": 1.333,
+    "12": 1.312,
+    "13": 1.287,
+    "14": 1.262,
+    "15": 1.238,
+    "16": 1.216,
+    "17": 1.205,
+    "18": 1.188,
+    "19": 1.166,
+    "20": 1.155
+  },
   "projection": {
     "year": 2026,
     "annual_median": 1.576,
