@@ -902,7 +902,7 @@ def render_html(result: dict) -> str:
     return (HTML_TEMPLATE
             .replace("{{NOW_SENTENCE}}", html.escape(now_sentence))
             .replace("{{NOW_CHANGES}}", html.escape(changes))
-            .replace("{{BASE_NOTE}}", f" and the 1991&ndash;2020 average ({base['value']:+.2f} &deg;C)" if base else "")
+            .replace("{{BASE_NOTE}}", f", and the 1991&ndash;2020 average ({base['value']:+.2f} &deg;C)" if base else "")
             .replace("{{LATEST}}", html.escape(fmt_date(result["latest_date"]) + prelim))
             .replace("{{GENERATED}}", html.escape(result["generated_utc"]))
             .replace("{{YEAR}}", str(year))
@@ -934,7 +934,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Global Temperature Tracker</title>
+<title>Daily Global Temperature Tracker</title>
 <meta name="description" content="Daily running means of global surface air temperature above the 1850-1900 pre-industrial baseline, from Copernicus ERA5.">
 <style>
   :root {
@@ -985,25 +985,15 @@ HTML_TEMPLATE = r"""<!doctype html>
 <body>
 <div class="wrap">
   <header>
-    <div class="site-name">Global Temperature Tracker</div>
+    <div class="site-name">Daily Global Temperature Tracker</div>
     <div class="meta">Latest data: <strong>{{LATEST}}</strong> &middot; Updated {{GENERATED}}</div>
   </header>
 
-  <h1>Global Temperature <span class="hl">Above Pre-Industrial</span></h1>
-  <p class="lead">Running means of daily global surface air temperature, in &deg;C above the 1850&ndash;1900 average. The 365-day mean is the headline figure; shorter windows react to weather and El Ni&ntilde;o.</p>
-
   <section class="card">
-    <h2>Running Means Today</h2>
-    <p>{{NOW_SENTENCE}} Bars show each running mean ending on the latest day; the 365-day mean is in blue. Dashed lines mark 1.5 &deg;C, 2 &deg;C{{BASE_NOTE}}.</p>
+    <h2>Global Surface Air Temperature Anomaly</h2>
+    <p>Bars show each running average ending on the latest day of available data. Dashed lines mark 1.5 &deg;C (Paris Commitment), 2 &deg;C{{BASE_NOTE}}.</p>
     <div class="chart-box tall"><canvas id="now" role="img" aria-label="Current 30-day, 90-day, 180-day, 365-day and year-to-date mean temperature anomalies"></canvas></div>
     <p class="small">Change from the same period a year earlier: {{NOW_CHANGES}}.</p>
-  </section>
-
-  <section class="card">
-    <h2>Running Means and Long-Term Trend Since {{TREND_FROM}}</h2>
-    <p>{{TREND_SENTENCE}}</p>
-    <p>Coloured lines are the averages of the preceding 30, 90, 180 or 365 days. Black is a straight-line trend and purple an exponential trend, both fitted to the daily values. Dashed lines mark 1.5 &deg;C and the 1991&ndash;2020 average. The exponential fit depends on measuring from 1850&ndash;1900; it shows whether warming is speeding up, not a forecast.</p>
-    <div class="chart-box tall"><canvas id="trend" role="img" aria-label="Running mean temperature anomalies and fitted trends since {{TREND_FROM}}"></canvas></div>
   </section>
 
   <section class="card">
@@ -1013,14 +1003,27 @@ HTML_TEMPLATE = r"""<!doctype html>
   </section>
 
   <section class="card">
+    <h2>Days Above 1.5 &deg;C Each Year</h2>
+    <p>{{ABOVE_SENTENCE}} {{FORECAST_DAYS_SENTENCE}} Each bar counts the days in that year whose global mean was more than 1.5 &deg;C above 1850&ndash;1900, from {{ABOVE_FIRST}}, the first year with one. For the current year, dark blue is days so far, light blue the projected remainder, and the whisker the 90% range.</p>
+    <div class="chart-box short"><canvas id="above" role="img" aria-label="Number of days above 1.5 degrees per year"></canvas></div>
+  </section>
+
+  <section class="card">
+    <h2>Long Term Global Surface Air Temperature Anomaly</h2>
+    <p>Coloured lines are the averages of the preceding 30 days (grey) and 365 days (blue), since {{TREND_FROM}}. Black is a straight-line trend and purple an exponential trend, both fitted to the daily values. Dashed lines mark 1.5 &deg;C and the 1991&ndash;2020 average. The exponential fit depends on measuring from 1850&ndash;1900; it shows whether warming is speeding up, not a forecast.</p>
+    <p>{{TREND_SENTENCE}}</p>
+    <div class="chart-box tall"><canvas id="trend" role="img" aria-label="Running mean temperature anomalies and fitted trends since {{TREND_FROM}}"></canvas></div>
+  </section>
+
+  <section class="card">
     <h2>{{CURRENT_YEAR}} Against Every Year Since {{CAL_FIRST}}</h2>
-    <p>Each grey line is one year from {{CAL_FIRST}} to {{CAL_PREV}}, darker for more recent years. {{RECORD_YEAR}}, the warmest complete year, is in blue and {{CURRENT_YEAR}} so far in black.{{CAL_FORECAST_NOTE}} The grey dashed curve is the 1991&ndash;2020 average for each date, which rises and falls with the seasons. Hover to compare a date.</p>
+    <p>Each grey line is one year from {{CAL_FIRST}} to {{CAL_PREV}}, darker for more recent years. {{RECORD_YEAR}}, the warmest complete year, is in red and {{CURRENT_YEAR}} so far in blue.{{CAL_FORECAST_NOTE}} The grey dashed curve is the 1991&ndash;2020 average for each date, which rises and falls with the seasons. Hover to compare a date.</p>
     <div class="chart-box tall"><canvas id="calendar" role="img" aria-label="Daily temperature anomaly by calendar day for every year since {{CAL_FIRST}}"></canvas></div>
   </section>
 
   <section class="card">
     <h2>Annual Averages, {{ANNUAL_FIRST}}&ndash;{{ANNUAL_LAST}}</h2>
-    <p>{{ANNUAL_SENTENCE}} Each bar is a complete calendar year; the warmest is in blue and the year selected below in orange. ERA5 values before about 1950 rest on fewer observations and are less certain. <a href="data/annual.csv">Download annual values (CSV)</a>.</p>
+    <p>{{ANNUAL_SENTENCE}} Each bar is a complete calendar year; the warmest is in red, the year selected below in orange and the projected current year in light blue. ERA5 values before about 1950 rest on fewer observations and are less certain. <a href="data/annual.csv">Download annual values (CSV)</a>.</p>
     {{FORECAST_SENTENCE}}
     <div class="chart-box"><canvas id="annual" role="img" aria-label="Annual mean temperature anomalies {{ANNUAL_FIRST}} to {{ANNUAL_LAST}}"></canvas></div>
     {{FORECAST_METHOD}}
@@ -1041,12 +1044,6 @@ HTML_TEMPLATE = r"""<!doctype html>
     </table>
   </section>
 
-  <section class="card">
-    <h2>Days Above 1.5 &deg;C Each Year</h2>
-    <p>{{ABOVE_SENTENCE}} {{FORECAST_DAYS_SENTENCE}} Each bar counts the days in that year whose global mean was more than 1.5 &deg;C above 1850&ndash;1900, from {{ABOVE_FIRST}}, the first year with one. For the current year, dark blue is days so far, light blue the projected remainder, and the whisker the 90% range.</p>
-    <div class="chart-box short"><canvas id="above" role="img" aria-label="Number of days above 1.5 degrees per year"></canvas></div>
-  </section>
-
   <div class="note"><strong>Reading these numbers:</strong> the Paris Agreement's 1.5 &deg;C limit refers to warming averaged over about 20 years. A 30-day, 365-day or calendar-year value above 1.5 &deg;C is not, on its own, a breach of that limit.</div>
 
   <footer>
@@ -1061,7 +1058,7 @@ HTML_TEMPLATE = r"""<!doctype html>
 (function () {
   var D = {{DATA}};
   // Colour-blind-safe series colours (Okabe-Ito), with the headline series in dark ink.
-  var C = { ink: '#1F2937', purple: '#CC79A7', blue: '#0072B2', green: '#009E73', orange: '#E69F00', red: '#D55E00', darkred: '#991B1B',
+  var C = { record: '#C62828', ink: '#1F2937', purple: '#CC79A7', blue: '#0072B2', green: '#009E73', orange: '#E69F00', red: '#D55E00', darkred: '#991B1B',
             grey: '#6B7280', accent: '#2563EB', grid: '#E5E7EB' };
   if (typeof Chart === 'undefined') {
     document.querySelectorAll('.chart-box').forEach(function (b) { b.textContent = 'Charts could not load. The numbers above are current.'; });
@@ -1173,10 +1170,10 @@ HTML_TEMPLATE = r"""<!doctype html>
   });
 
   // Trend chart: 365-day in blue (headline), shorter windows in Okabe-Ito colours.
-  var colors = { 365: C.accent, 180: C.green, 90: C.orange, 30: C.grey };
-  var order = [365, 180, 90, 30];
+  var colors = { 365: C.accent, 30: C.grey };
+  var order = [365, 30];
   var trendSets = order.map(function (n) {
-    // Shorter windows are drawn lighter so the 365-day line and the trendlines stand out.
+    // The 30-day line is drawn lighter so the 365-day line and the trendlines stand out.
     var col = n === 365 ? colors[n] : colors[n] + '99';
     return { label: n + '-day', data: D.trend['m' + n], borderColor: col, backgroundColor: col,
              borderWidth: n === 365 ? 2.5 : 1, pointRadius: 0, tension: 0, order: n === 365 ? 1 : 2 };
@@ -1225,7 +1222,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       maintainAspectRatio: false, animation: false, layout: { padding: refPad },
       plugins: {
         legend: { display: false },
-        refLines: { lines: [REF.paris] },
+        refLines: { lines: refs(REF.two, REF.paris, REF.base) },
         tooltip: { callbacks: { title: function (it) { return label(it[0].label, true); },
                                 label: function (it) {
                                   var s = D.daily.status[it.dataIndex] === 'PRELIMINARY' ? ' (preliminary)' : '';
@@ -1234,17 +1231,19 @@ HTML_TEMPLATE = r"""<!doctype html>
       scales: {
         x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true, maxTicksLimit: 8,
              callback: function (v, i) { return label(D.daily.dates[i], false); } } },
-        y: { beginAtZero: true, grid: { color: C.grid }, ticks: { callback: function (v) { return v.toFixed(1) + '°'; } },
+        y: { beginAtZero: true, max: Math.ceil((Math.max(D.two, Math.max.apply(null, D.daily.values)) + 0.2) * 10) / 10,
+             grid: { color: C.grid },
+             ticks: { stepSize: 0.5, callback: function (v) { return Math.abs(v * 2 - Math.round(v * 2)) < 1e-9 ? v.toFixed(1) + '°' : ''; } },
              title: { display: true, text: '°C above 1850–1900' } }
       }
     }
   });
 
-  // Annual chart: one bar per complete year, warmest year highlighted, selected year in orange.
+  // Annual chart: one bar per complete year, warmest year in red, selected year in orange.
   var selectedYear = null;
   function barColors() {
     return D.annual.years.map(function (y) {
-      return y === selectedYear ? C.orange : (y === D.record_year ? C.accent : C.ink);
+      return y === selectedYear ? C.orange : (y === D.record_year ? C.record : C.ink);
     });
   }
   // With a projection, the current year gets its own light bar (median) and a 90% whisker.
@@ -1289,7 +1288,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
   });
 
-  // Every year by calendar day: history in greys (older lighter), record year blue, current year black.
+  // Every year by calendar day: history in greys (older lighter), record year red, current year blue.
   var cal = D.calendar, firstY = cal.years[0], lastY = cal.years[cal.years.length - 1];
   function greyFor(y) {
     var f = (y - firstY) / Math.max(1, (D.current_year - 1 - firstY));   // 0 = oldest, 1 = newest
@@ -1299,7 +1298,7 @@ HTML_TEMPLATE = r"""<!doctype html>
   var calSets = cal.years.map(function (y, i) {
     var hi = y === D.current_year ? 'current' : (y === D.record_year ? 'record' : null);
     return { label: String(y), data: cal.values[i], spanGaps: true, pointRadius: 0, tension: 0,
-             borderColor: hi === 'current' ? C.ink : (hi === 'record' ? C.accent : greyFor(y)),
+             borderColor: hi === 'current' ? C.accent : (hi === 'record' ? C.record : greyFor(y)),
              borderWidth: hi ? 2.5 : 0.8, order: hi ? 0 : 1, highlight: hi };
   });
   if (cal.base_1991_2020) {
@@ -1318,9 +1317,9 @@ HTML_TEMPLATE = r"""<!doctype html>
     calSets.push({ label: 'Projection, 5th percentile', data: onSlots(FC.band_low), pointRadius: 0, borderWidth: 0,
                    borderColor: 'transparent', order: 0, highlight: 'band' });
     calSets.push({ label: 'Projection, 95th percentile', data: onSlots(FC.band_high), pointRadius: 0, borderWidth: 0,
-                   borderColor: 'transparent', backgroundColor: C.ink + '26', fill: '-1', order: 0, highlight: 'band' });
+                   borderColor: 'transparent', backgroundColor: C.accent + '26', fill: '-1', order: 0, highlight: 'band' });
     calSets.push({ label: 'Projection, median', data: onSlots(FC.band_mid), pointRadius: 0, borderWidth: 2,
-                   borderDash: [4, 3], borderColor: C.ink, order: 0, highlight: 'band' });
+                   borderDash: [4, 3], borderColor: C.accent, order: 0, highlight: 'band' });
   }
   var monthsAt = {};
   cal.slots.forEach(function (md, i) { if (md.slice(3) === '01') { monthsAt[i] = months[Number(md.slice(0, 2)) - 1]; } });

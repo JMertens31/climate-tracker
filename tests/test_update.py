@@ -228,7 +228,7 @@ class BaselineTest(unittest.TestCase):
         self.assertEqual(len(res["baselines"]), 1)
         self.assertAlmostEqual(res["baselines"][0]["value"], sum(vals) / len(vals), places=6)
         html = (self.site / "index.html").read_text()
-        self.assertIn("Running Means Today", html)
+        self.assertIn("Global Surface Air Temperature Anomaly</h2>", html)
         self.assertIn("the 1991&ndash;2020 average (", html)
         self.assertNotIn("{{", html)
 
@@ -369,7 +369,7 @@ class PageSectionsTest(unittest.TestCase):
             res = update.build(text, today=dt.date(2026, 11, 2), site_dir=Path(tmp) / "site",
                                repo_latest=Path(tmp) / "latest.json")
             html = (Path(tmp) / "site" / "index.html").read_text()
-            self.assertIn("Running Means and Long-Term Trend Since 1991", html)
+            self.assertIn("Long Term Global Surface Air Temperature Anomaly", html)
             self.assertIn("2026 Against Every Year Since 1985", html)
             self.assertIn("Days Above 1.5 &deg;C Each Year", html)
             self.assertNotIn("{{", html)
