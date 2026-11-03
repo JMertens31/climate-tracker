@@ -1,39 +1,39 @@
 {
-  "latest_date": "2026-10-31",
+  "latest_date": "2026-11-01",
   "latest_status": "PRELIMINARY",
-  "generated_utc": "2026-11-02 20:42 UTC",
+  "generated_utc": "2026-11-03 13:19 UTC",
   "baseline": "1850-1900 (C3S daily offset applied to ERA5 1991-2020 anomalies)",
   "units": "degC",
-  "latest_daily": 1.966,
+  "latest_daily": 1.944,
   "means": {
     "30d": {
-      "value": 1.761,
-      "start": "2026-10-02",
-      "end": "2026-10-31",
-      "change_vs_1y_earlier": 0.212
+      "value": 1.775,
+      "start": "2026-10-03",
+      "end": "2026-11-01",
+      "change_vs_1y_earlier": 0.219
     },
     "90d": {
-      "value": 1.68,
-      "start": "2026-08-03",
-      "end": "2026-10-31",
-      "change_vs_1y_earlier": 0.24
+      "value": 1.686,
+      "start": "2026-08-04",
+      "end": "2026-11-01",
+      "change_vs_1y_earlier": 0.239
     },
     "180d": {
-      "value": 1.555,
-      "start": "2026-05-05",
-      "end": "2026-10-31",
-      "change_vs_1y_earlier": 0.18
+      "value": 1.557,
+      "start": "2026-05-06",
+      "end": "2026-11-01",
+      "change_vs_1y_earlier": 0.181
     },
     "365d": {
-      "value": 1.513,
-      "start": "2025-11-01",
-      "end": "2026-10-31",
-      "change_vs_1y_earlier": 0.012
+      "value": 1.514,
+      "start": "2025-11-02",
+      "end": "2026-11-01",
+      "change_vs_1y_earlier": 0.013
     },
     "ytd": {
-      "value": 1.519,
+      "value": 1.521,
       "start": "2026-01-01",
-      "end": "2026-10-31",
+      "end": "2026-11-01",
       "change_vs_1y_earlier": 0.05
     }
   },
