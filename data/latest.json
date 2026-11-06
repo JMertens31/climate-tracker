@@ -1,7 +1,7 @@
 {
   "latest_date": "2026-11-04",
   "latest_status": "PRELIMINARY",
-  "generated_utc": "2026-11-06 13:22 UTC",
+  "generated_utc": "2026-11-06 23:03 UTC",
   "baseline": "1850-1900 (C3S daily offset applied to ERA5 1991-2020 anomalies)",
   "units": "degC",
   "latest_daily": 2.024,
@@ -65,6 +65,11 @@
     }
   },
   "days_above_1_5_this_year": 172,
+  "days_above_2_by_year": {
+    "2023": 2,
+    "2024": 3,
+    "2026": 2
+  },
   "multi_year_means": {
     "1": 1.517,
     "2": 1.508,
