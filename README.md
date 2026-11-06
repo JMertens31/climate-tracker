@@ -2,7 +2,7 @@
 
 A daily-updated dashboard of global surface air temperature above the 1850–1900 pre-industrial baseline, built from Copernicus ERA5 data.
 
-**Live dashboard:** `https://<owner>.github.io/<repo>/` (replace with your Pages URL)
+**Live dashboard:** [https://jmertens31.github.io/climate-tracker/](https://jmertens31.github.io/climate-tracker/)
 
 The page is laid out in this order: global surface air temperature anomaly (the running means below, as bars), daily values for the last 60 days, days above 1.5 °C each year, this year against every year by calendar day, the long-term anomaly since 1991, and annual averages. The top chart shows five running means as bars, each ending on the latest available day, with the 365-day mean in blue and dashed lines at 1.5 °C, 2 °C and the 1991–2020 average:
 
@@ -19,6 +19,7 @@ Other sections:
 - **Long-term global surface air temperature anomaly:** the 30-day and 365-day means from 1 January 1991 (the start of the 1991–2020 period), with two trends fitted by least squares to every daily value since then: a straight line, and an exponential curve (y = A·e^(kt)). The page states each trend's current level, rate per decade and when it reaches (or passed) 1.5 °C. The exponential is fitted to the values themselves rather than to their logarithms, because some days in 1991–92 (after the Pinatubo eruption) were at or below the 1850–1900 level. Its curvature depends on measuring from 1850–1900, so it indicates acceleration, not a forecast.
 - **This year against every year since 1940, by calendar day:** one line per year, with the warmest complete year in red and the current year (and its projected remainder) in blue, and the 1991–2020 average for each calendar day as a dashed curve.
 - **Daily values, last 60 days:** with dashed lines at 1.5 °C, 2 °C and the 1991–2020 average.
+- **Days above 2 °C (box under the days-above chart):** the total number of days above 2 °C in the record and, for each year with any, the count. For a year with 5 or fewer such days it also lists the dates and the highest value; after that it gives the count only, so the box stays short. While the year is in progress it adds a projection of the year's total from the same simulations as the year-end projection. Because 2 °C days have been so rare, that count cannot be backtested, and its range is wide when daily values are hovering near 2 °C.
 - **Days above 1.5 °C each year:** from the first year with such a day; the current year is shown separately as incomplete.
 
 - **Year-end projection:** until 31 December, the page projects the current year's final average and its final count of days above 1.5 °C, each with a 90% range. It shows them as a light bar with a whisker in the annual and days-above charts, as a shaded band on the calendar-day chart, and as text giving the most likely rank and the chance of a record.

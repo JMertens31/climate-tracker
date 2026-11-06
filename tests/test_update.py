@@ -595,6 +595,57 @@ class MultiYearTest(unittest.TestCase):
         self.assertIn("Averaged over the last 12 months", update.multi_year_text(one))
 
 
+class Days2Test(unittest.TestCase):
+    def test_date_runs(self):
+        D = dt.date
+        self.assertEqual(update.date_runs([D(2023, 11, 17), D(2023, 11, 18)]), "17\u201318 Nov")
+        self.assertEqual(update.date_runs([D(2024, 2, 8), D(2024, 2, 9), D(2024, 2, 10), D(2024, 3, 3)]),
+                         "8\u201310 Feb, 3 Mar")
+        self.assertEqual(update.date_runs([D(2025, 1, 31), D(2025, 2, 1)]), "31 Jan\u20131 Feb")
+        self.assertEqual(update.date_runs([D(2025, 5, 5)]), "5 May")
+
+    def real_like_detail(self):
+        hot = {dt.date(2023, 11, 17): 2.051, dt.date(2023, 11, 18): 2.046, dt.date(2024, 2, 8): 2.013,
+               dt.date(2024, 2, 9): 2.031, dt.date(2024, 2, 10): 2.010, dt.date(2026, 11, 3): 2.030,
+               dt.date(2026, 11, 4): 2.024}
+        rows = rows_from(lambda d: hot.get(d, 1.4), start=dt.date(2020, 1, 1), end=dt.date(2026, 11, 4))
+        return update.days_above_detail(rows)
+
+    def test_text_matches_todays_record(self):
+        lines = update.days2_text(self.real_like_detail(), None, "2026-11-04")
+        self.assertEqual(lines[0], "Days above 2 \u00b0C are still rare: 7 in the record, the first in 2023.")
+        self.assertEqual(lines[1],
+                         "2023: 2 days (17\u201318 Nov; highest +2.05 \u00b0C) \u00b7 "
+                         "2024: 3 days (8\u201310 Feb; highest +2.03 \u00b0C) \u00b7 "
+                         "2026 so far: 2 days (3\u20134 Nov; highest +2.03 \u00b0C).")
+        self.assertEqual(len(lines), 2)                       # no projection without a forecast
+
+    def test_many_days_gives_count_only(self):
+        rows = rows_from(lambda d: 2.1 if d.month == 3 else 1.4, start=dt.date(2027, 1, 1), end=dt.date(2027, 12, 31))
+        lines = update.days2_text(update.days_above_detail(rows), None, "2028-01-02")
+        self.assertEqual(lines[1], "2027: 31 days.")
+        self.assertIn("becoming more common", lines[0])
+
+    def test_none_and_projection(self):
+        self.assertEqual(update.days2_text([], None, "2026-11-04"), ["No day in the record has been above 2 \u00b0C."])
+        fc = {"year": 2026, "days2_low": 2, "days2_high": 11.4, "days2_median": 4.6, "days2_observed": 2}
+        lines = update.days2_text(self.real_like_detail(), fc, "2026-11-04")
+        self.assertEqual(lines[-1], "2026 is projected to reach about 5 by 31 December (90% range 2\u201311).")
+        none_more = {"year": 2026, "days2_low": 2, "days2_high": 2, "days2_median": 2, "days2_observed": 2}
+        self.assertEqual(update.days2_text(self.real_like_detail(), none_more, "2026-11-04")[-1],
+                         "No more are expected in 2026.")
+
+    def test_forecast_counts_days_above_2(self):
+        rows = forecast_rows(lambda d: 1.2 + (0.9 if (d.year == 2026 and d.month == 3) else 0.0)
+                             + 0.01 * (d.year - 2000), end=dt.date(2026, 11, 1))
+        fc = update.forecast_year(rows)
+        observed = sum(r["pi"] > 2.0 for r in rows if r["date"].year == 2026)
+        self.assertGreater(observed, 0)
+        self.assertEqual(fc["days2_observed"], observed)
+        self.assertGreaterEqual(fc["days2_low"], observed)
+        self.assertLessEqual(fc["days2_high"], observed + fc["days_left"])
+
+
 class ValidationTest(unittest.TestCase):
     def setUp(self):
         self.ano = lambda d: 0.5

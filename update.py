@@ -520,14 +520,16 @@ def forecast_year(rows: list[dict], cut_index: int | None = None, threshold: flo
     ytd = [r["pi"] for r in rows if r["date"].year == year and r["date"] <= cut]
     ytd_sum = sum(ytd)
     ytd_above = sum(v > threshold for v in ytd)
+    ytd_above2 = sum(v > TWO_DEGREES for v in ytd)
     n_days = 366 if calendar.isleap(year) else 365
 
-    annual, days, paths = [], [], []
+    annual, days, days2, paths = [], [], [], []
     for x_m, D in members:
         pis = [base[h] + D[h] - fitted(h, x_m) for h in range(H)]
         paths.append(pis)
         annual.append((ytd_sum + sum(pis)) / n_days)
         days.append(ytd_above + sum(v > threshold for v in pis))
+        days2.append(ytd_above2 + sum(v > TWO_DEGREES for v in pis))
     def widen(vals: list[float], lo: float | None = None, hi: float | None = None) -> list[float]:
         mid = quantile(sorted(vals), 0.5)
         out = [mid + spread * (v - mid) for v in vals]
@@ -537,6 +539,7 @@ def forecast_year(rows: list[dict], cut_index: int | None = None, threshold: flo
 
     annual_sorted = widen(annual)
     days_sorted = widen(days, lo=ytd_above, hi=ytd_above + H)
+    days2_sorted = widen(days2, lo=ytd_above2, hi=ytd_above2 + H)
     band = []
     for h in range(H):
         col = widen([p[h] for p in paths])
@@ -555,6 +558,8 @@ def forecast_year(rows: list[dict], cut_index: int | None = None, threshold: flo
         "days_observed": ytd_above, "days": days_sorted,
         "days_median": quantile(days_sorted, 0.5),
         "days_low": quantile(days_sorted, 0.05), "days_high": quantile(days_sorted, 0.95),
+        "days2_observed": ytd_above2, "days2_median": quantile(days2_sorted, 0.5),
+        "days2_low": quantile(days2_sorted, 0.05), "days2_high": quantile(days2_sorted, 0.95),
         "dates": [d.isoformat() for d in dates],
         "band_low": [x[0] for x in band], "band_mid": [x[1] for x in band], "band_high": [x[2] for x in band],
     }
@@ -654,6 +659,7 @@ def compute(rows: list[dict], oni: dict[int, float] | None = None) -> dict:
         },
         "fits": fits,
         "days_above": days_above(rows),
+        "days_above_2": days_above_detail(rows),
         "calendar": by_calendar_day(rows),
         "forecast": (fc := forecast_year(rows, oni=oni)),
         "forecast_odds": rank_odds(fc, [a for a in annual if a["year"] < fc["year"]]) if fc else None,
@@ -748,6 +754,7 @@ def latest_json(result: dict) -> dict:
                  "reaches_1_5": result["fits"]["exponential"]["reaches_threshold"]},
         },
         "days_above_1_5_this_year": (result["days_above"]["counts"] or [None])[-1],
+        "days_above_2_by_year": {str(y["year"]): len(y["dates"]) for y in result["days_above_2"]},
         "multi_year_means": {str(n): round(m["value"], 3) for n, m in result["multi_year"].items()},
         "projection": None if not result["forecast"] else {
             "year": result["forecast"]["year"],
@@ -810,6 +817,65 @@ def forecast_text(fc: dict | None, odds: dict | None) -> str:
         out += f"; the chance of a new record is {fmt_chance(shares.get(1, 0.0))}"
     out += (f". The chance its average ends above 1.5 \u00b0C is {fmt_chance(odds['above_threshold'])}.")
     return out
+
+
+DAY_LIST_MAX = 5   # list the dates for a year with at most this many days; otherwise give the count only
+
+
+def days_above_detail(rows: list[dict], threshold: float = TWO_DEGREES) -> list[dict]:
+    """Per calendar year with at least one day above `threshold`: the dates, count and highest value."""
+    years: dict[int, dict] = {}
+    for r in rows:
+        if r["pi"] > threshold:
+            y = years.setdefault(r["date"].year, {"year": r["date"].year, "dates": [], "max": r["pi"]})
+            y["dates"].append(r["date"])
+            y["max"] = max(y["max"], r["pi"])
+    return [years[y] for y in sorted(years)]
+
+
+def date_runs(dates: list[dt.date]) -> str:
+    """'17\u201318 Nov', '8\u201310 Feb, 3 Mar', '31 Jan\u20131 Feb' from a sorted list of dates."""
+    runs, start, prev = [], None, None
+    for d in dates + [None]:
+        if d is not None and prev is not None and (d - prev).days == 1:
+            prev = d
+            continue
+        if start is not None:
+            if start == prev:
+                runs.append(f"{start.day} {start.strftime('%b')}")
+            elif start.month == prev.month:
+                runs.append(f"{start.day}\u2013{prev.day} {prev.strftime('%b')}")
+            else:
+                runs.append(f"{start.day} {start.strftime('%b')}\u2013{prev.day} {prev.strftime('%b')}")
+        start = prev = d
+    return ", ".join(runs)
+
+
+def days2_text(detail: list[dict], fc: dict | None, latest_iso: str) -> list[str]:
+    """Sentences for the 'Days Above 2 C' box (one per line)."""
+    current = dt.date.fromisoformat(latest_iso).year
+    total = sum(len(y["dates"]) for y in detail)
+    if not detail:
+        lines = ["No day in the record has been above 2 \u00b0C."]
+    else:
+        lead = "still rare" if total <= 30 else "becoming more common"
+        lines = [f"Days above 2 \u00b0C are {lead}: {total} in the record, the first in {detail[0]['year']}."]
+        parts = []
+        for y in detail:
+            n = len(y["dates"])
+            label = f"{y['year']} so far" if y["year"] == current else str(y["year"])
+            text = f"{label}: {n} {'day' if n == 1 else 'days'}"
+            if n <= DAY_LIST_MAX:
+                text += f" ({date_runs(y['dates'])}; highest {fmt_signed(y['max'])} \u00b0C)"
+            parts.append(text)
+        lines.append(" \u00b7 ".join(parts) + ".")
+    if fc:
+        lo, hi, med = round(fc["days2_low"]), round(fc["days2_high"]), round(fc["days2_median"])
+        if hi <= fc["days2_observed"]:
+            lines.append(f"No more are expected in {fc['year']}.")
+        else:
+            lines.append(f"{fc['year']} is projected to reach about {med} by 31 December (90% range {lo}\u2013{hi}).")
+    return lines
 
 
 def forecast_days_text(fc: dict | None) -> str:
@@ -974,6 +1040,9 @@ def render_html(result: dict) -> str:
                      f'<p class="forecast-method">{html.escape(forecast_method_text(fc))}'
                      f'<a href="{README_METHOD_URL}">see how the projection works</a>.</p></div>' if fc else "")
             .replace("{{FORECAST_DAYS_SENTENCE}}", html.escape(forecast_days_text(fc)))
+            .replace("{{DAYS2_BOX}}", '<div class="forecast days2"><h3>Days Above 2 &deg;C</h3>'
+                     + "".join(f"<p>{html.escape(t)}</p>" for t in days2_text(result["days_above_2"], fc, result["latest_date"]))
+                     + "</div>")
             .replace("{{CAL_FORECAST_NOTE}}", " The shaded band continues it to 31 December: the middle 90% of projected paths, with the dashed line as the median ("
                      f'<a href="{README_METHOD_URL}">see how the projection works</a>).' if fc else "")
             .replace("{{PROJECTION_LINK}}", f' (<a href="{README_METHOD_URL}">see how the projection works</a>)' if fc else "")
@@ -1012,6 +1081,9 @@ HTML_TEMPLATE = r"""<!doctype html>
   .forecast p { margin: 0; }
   .forecast-main { font-weight: 500; }
   .forecast-method { font-size: 13px; color: var(--muted); margin-top: 8px !important; }
+  .days2 { margin-top: 20px; }
+  .days2 h3 { font-size: 17px; margin: 0 0 6px; }
+  .days2 p + p { margin-top: 4px; }
   .card { margin: 0 0 40px; }
   .card p { margin: 0 0 12px; font-size: 13.5px; }
   .chart-box { position: relative; height: 360px; }
@@ -1063,6 +1135,7 @@ HTML_TEMPLATE = r"""<!doctype html>
     <h2>Days Above 1.5 &deg;C Each Year</h2>
     <p>{{ABOVE_SENTENCE}} {{FORECAST_DAYS_SENTENCE}} Each bar counts the days in that year whose global mean was more than 1.5 &deg;C above 1850&ndash;1900, from {{ABOVE_FIRST}}, the first year with one. For the current year, dark blue is days so far, light blue the projected remainder, and the whisker the 90% range{{PROJECTION_LINK}}.</p>
     <div class="chart-box short"><canvas id="above" role="img" aria-label="Number of days above 1.5 degrees per year"></canvas></div>
+    {{DAYS2_BOX}}
   </section>
 
   <section class="card">
