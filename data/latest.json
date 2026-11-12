@@ -1,40 +1,40 @@
 {
-  "latest_date": "2026-11-09",
+  "latest_date": "2026-11-10",
   "latest_status": "PRELIMINARY",
-  "generated_utc": "2026-11-11 13:26 UTC",
+  "generated_utc": "2026-11-12 13:28 UTC",
   "baseline": "1850-1900 (C3S daily offset applied to ERA5 1991-2020 anomalies)",
   "units": "degC",
-  "latest_daily": 1.855,
+  "latest_daily": 1.885,
   "means": {
     "30d": {
-      "value": 1.849,
-      "start": "2026-10-11",
-      "end": "2026-11-09",
-      "change_vs_1y_earlier": 0.283
+      "value": 1.854,
+      "start": "2026-10-12",
+      "end": "2026-11-10",
+      "change_vs_1y_earlier": 0.296
     },
     "90d": {
-      "value": 1.719,
-      "start": "2026-08-12",
-      "end": "2026-11-09",
-      "change_vs_1y_earlier": 0.253
+      "value": 1.722,
+      "start": "2026-08-13",
+      "end": "2026-11-10",
+      "change_vs_1y_earlier": 0.256
     },
     "180d": {
-      "value": 1.577,
-      "start": "2026-05-14",
-      "end": "2026-11-09",
-      "change_vs_1y_earlier": 0.202
+      "value": 1.579,
+      "start": "2026-05-15",
+      "end": "2026-11-10",
+      "change_vs_1y_earlier": 0.204
     },
     "365d": {
-      "value": 1.524,
-      "start": "2025-11-10",
-      "end": "2026-11-09",
-      "change_vs_1y_earlier": 0.028
+      "value": 1.526,
+      "start": "2025-11-11",
+      "end": "2026-11-10",
+      "change_vs_1y_earlier": 0.031
     },
     "ytd": {
-      "value": 1.531,
+      "value": 1.533,
       "start": "2026-01-01",
-      "end": "2026-11-09",
-      "change_vs_1y_earlier": 0.061
+      "end": "2026-11-10",
+      "change_vs_1y_earlier": 0.063
     }
   },
   "last_complete_year": {
@@ -51,7 +51,7 @@
       "value_now": 1.437,
       "per_decade": 0.263,
       "reaches_1_5": {
-        "date": "2029-03-30",
+        "date": "2029-03-28",
         "passed": false
       }
     },
@@ -59,28 +59,28 @@
       "value_now": 1.528,
       "per_decade_now": 0.493,
       "reaches_1_5": {
-        "date": "2026-03-16",
+        "date": "2026-03-15",
         "passed": true
       }
     }
   },
-  "days_above_1_5_this_year": 177,
+  "days_above_1_5_this_year": 178,
   "days_above_2_by_year": {
     "2023": 2,
     "2024": 3,
     "2026": 2
   },
   "multi_year_means": {
-    "1": 1.524,
+    "1": 1.526,
     "2": 1.51,
     "3": 1.546,
-    "4": 1.507,
+    "4": 1.508,
     "5": 1.445,
     "6": 1.398,
     "7": 1.388,
     "8": 1.371,
     "9": 1.346,
-    "10": 1.334,
+    "10": 1.335,
     "11": 1.335,
     "12": 1.314,
     "13": 1.289,
@@ -94,7 +94,7 @@
   },
   "projection": {
     "year": 2026,
-    "annual_median": 1.585,
+    "annual_median": 1.586,
     "annual_90pct": [
       1.559,
       1.609
@@ -105,8 +105,8 @@
       229.0
     ],
     "rank_share": {
-      "1": 0.179,
-      "2": 0.821
+      "1": 0.187,
+      "2": 0.813
     },
     "chance_above_1_5": 1.0,
     "model": "enso",
