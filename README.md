@@ -69,7 +69,7 @@ Hovering over a bar shows the same window one year earlier. Above the chart, a s
 
 ## How It Works
 
-A GitHub Actions workflow (`.github/workflows/daily.yml`) runs once a day at 12:17 UTC:
+A GitHub Actions workflow (`.github/workflows/daily.yml`) runs once a day at 10:17 UTC:
 
 1. Runs the tests in `tests/`.
 2. `update.py` downloads the Climate Pulse daily CSV and checks it: expected columns, no missing dates, newest value no more than 10 days old. Any failure stops the run, and GitHub emails the person who last edited the workflow.
