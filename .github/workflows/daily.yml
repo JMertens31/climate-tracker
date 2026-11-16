@@ -2,8 +2,9 @@ name: Daily update
 
 on:
   schedule:
-    # 12:17 UTC daily (06:17 in Edmonton). Off the hour to avoid GitHub's busiest minute.
-    - cron: "17 12 * * *"
+    # 10:17 UTC daily (04:17 in Edmonton, UTC-6 year-round). ECMWF updates the source file
+    # around 04:15 UTC, so this leaves a wide margin. Off the hour to avoid GitHub's busiest minute.
+    - cron: "17 10 * * *"
   workflow_dispatch: {}   # adds a "Run workflow" button in the Actions tab
   push:
     branches: [main]
@@ -23,9 +24,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -47,9 +48,9 @@ jobs:
             git push
           fi
 
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
 
-      - uses: actions/upload-pages-artifact@v4
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: site
 
@@ -61,4 +62,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
