@@ -1,40 +1,40 @@
 {
-  "latest_date": "2026-11-17",
+  "latest_date": "2026-11-18",
   "latest_status": "PRELIMINARY",
-  "generated_utc": "2026-11-19 11:08 UTC",
+  "generated_utc": "2026-11-20 11:10 UTC",
   "baseline": "1850-1900 (C3S daily offset applied to ERA5 1991-2020 anomalies)",
   "units": "degC",
-  "latest_daily": 1.961,
+  "latest_daily": 1.995,
   "means": {
     "30d": {
-      "value": 1.91,
-      "start": "2026-10-19",
-      "end": "2026-11-17",
-      "change_vs_1y_earlier": 0.367
+      "value": 1.918,
+      "start": "2026-10-20",
+      "end": "2026-11-18",
+      "change_vs_1y_earlier": 0.373
     },
     "90d": {
-      "value": 1.747,
-      "start": "2026-08-20",
-      "end": "2026-11-17",
+      "value": 1.75,
+      "start": "2026-08-21",
+      "end": "2026-11-18",
       "change_vs_1y_earlier": 0.259
     },
     "180d": {
-      "value": 1.601,
-      "start": "2026-05-22",
-      "end": "2026-11-17",
-      "change_vs_1y_earlier": 0.222
+      "value": 1.605,
+      "start": "2026-05-23",
+      "end": "2026-11-18",
+      "change_vs_1y_earlier": 0.225
     },
     "365d": {
-      "value": 1.535,
-      "start": "2025-11-18",
-      "end": "2026-11-17",
-      "change_vs_1y_earlier": 0.042
+      "value": 1.536,
+      "start": "2025-11-19",
+      "end": "2026-11-18",
+      "change_vs_1y_earlier": 0.043
     },
     "ytd": {
-      "value": 1.542,
+      "value": 1.544,
       "start": "2026-01-01",
-      "end": "2026-11-17",
-      "change_vs_1y_earlier": 0.072
+      "end": "2026-11-18",
+      "change_vs_1y_earlier": 0.073
     }
   },
   "last_complete_year": {
@@ -51,41 +51,41 @@
       "value_now": 1.439,
       "per_decade": 0.264,
       "reaches_1_5": {
-        "date": "2029-03-11",
+        "date": "2029-03-08",
         "passed": false
       }
     },
     "exponential": {
-      "value_now": 1.53,
+      "value_now": 1.531,
       "per_decade_now": 0.495,
       "reaches_1_5": {
-        "date": "2026-03-02",
+        "date": "2026-02-28",
         "passed": true
       }
     }
   },
-  "days_above_1_5_this_year": 185,
+  "days_above_1_5_this_year": 186,
   "days_above_2_by_year": {
     "2023": 2,
     "2024": 3,
     "2026": 3
   },
   "multi_year_means": {
-    "1": 1.535,
-    "2": 1.514,
+    "1": 1.536,
+    "2": 1.515,
     "3": 1.547,
-    "4": 1.512,
-    "5": 1.448,
+    "4": 1.513,
+    "5": 1.449,
     "6": 1.4,
-    "7": 1.39,
-    "8": 1.373,
-    "9": 1.348,
+    "7": 1.391,
+    "8": 1.374,
+    "9": 1.349,
     "10": 1.336,
     "11": 1.336,
     "12": 1.316,
     "13": 1.291,
     "14": 1.265,
-    "15": 1.241,
+    "15": 1.242,
     "16": 1.218,
     "17": 1.207,
     "18": 1.19,
@@ -105,8 +105,8 @@
       229.0
     ],
     "rank_share": {
-      "1": 0.273,
-      "2": 0.727
+      "1": 0.282,
+      "2": 0.718
     },
     "chance_above_1_5": 1.0,
     "model": "enso",
